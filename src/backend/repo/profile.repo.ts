@@ -71,11 +71,43 @@ export class ProfileRepository {
     userId: string,
     role?: string
   ): Promise<ProfileEntity | null> {
+    const normalized = normalizeRole(role);
+    if (normalized === "admin" || normalized === "super_admin") {
+      return this.getAdminProfile(userId);
+    }
+
     if (isPractitionerRole(role)) {
       return this.getPractitionerProfile(userId);
     }
 
     return this.getPatientProfile(userId);
+  }
+
+  private async getAdminProfile(userId: string): Promise<ProfileEntity | null> {
+    const { data: user, error } = await this.supabase
+      .from("users")
+      .select("id, mobile, email")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (error || !user) return null;
+
+    return {
+      id: user.id,
+      name: "", // handled by JWT meta_data in the frontend
+      email: user.email ?? "",
+      phone: user.mobile ?? "",
+      dob: "",
+      age: 0,
+      gender: "",
+      city: "",
+      pinCode: "",
+      prakriti: "Unknown",
+      wellnessGoals: [],
+      abhaId: null,
+      abhaAddress: null,
+      address: "",
+    };
   }
 
   private async getPractitionerProfile(
@@ -231,54 +263,58 @@ export class ProfileRepository {
     updates: UpdateProfileFields,
     role?: string
   ): Promise<void> {
-    const practitioner = isPractitionerRole(role);
+    const normalized = normalizeRole(role);
+    const isAdmin = normalized === "admin" || normalized === "super_admin";
 
-    const tableName = practitioner
-      ? "practitioners"
-      : "patients";
+    if (!isAdmin) {
+      const practitioner = isPractitionerRole(role);
 
-    const tableUpdates: Record<string, unknown> = {};
+      const tableName = practitioner
+        ? "practitioners"
+        : "patients";
 
-    // Use !== undefined so empty or null-like values can be handled properly.
-    if (updates.fullName !== undefined) {
-      tableUpdates.full_name = updates.fullName.trim();
-    }
+      const tableUpdates: Record<string, unknown> = {};
 
-    if (updates.dob !== undefined) {
-      tableUpdates.date_of_birth = updates.dob || null;
-    }
-
-    if (updates.gender !== undefined) {
-      tableUpdates.gender = updates.gender
-        ? updates.gender.trim().toLowerCase()
-        : null;
-    }
-
-    if (updates.bloodGroup !== undefined) {
-      tableUpdates.blood_group = updates.bloodGroup || null;
-    }
-
-    if (!practitioner) {
-      if (updates.city !== undefined) {
-        tableUpdates.city = updates.city || null;
+      // Use !== undefined so empty or null-like values can be handled properly.
+      if (updates.fullName !== undefined) {
+        tableUpdates.full_name = updates.fullName.trim();
       }
 
-      if (updates.pinCode !== undefined) {
-        tableUpdates.pin_code = updates.pinCode || null;
+      if (updates.dob !== undefined) {
+        tableUpdates.date_of_birth = updates.dob || null;
       }
 
-      if (updates.prakriti !== undefined) {
-        tableUpdates.prakriti = updates.prakriti || null;
+      if (updates.gender !== undefined) {
+        tableUpdates.gender = updates.gender
+          ? updates.gender.trim().toLowerCase()
+          : null;
       }
-    }
 
-    if (Object.keys(tableUpdates).length > 0) {
-      const { data, error } = await this.supabase
-        .from(tableName)
-        .update(tableUpdates)
-        .eq("user_id", userId)
-        .select("id")
-        .maybeSingle();
+      if (updates.bloodGroup !== undefined) {
+        tableUpdates.blood_group = updates.bloodGroup || null;
+      }
+
+      if (!practitioner) {
+        if (updates.city !== undefined) {
+          tableUpdates.city = updates.city || null;
+        }
+
+        if (updates.pinCode !== undefined) {
+          tableUpdates.pin_code = updates.pinCode || null;
+        }
+
+        if (updates.prakriti !== undefined) {
+          tableUpdates.prakriti = updates.prakriti || null;
+        }
+      }
+
+      if (Object.keys(tableUpdates).length > 0) {
+        const { data, error } = await this.supabase
+          .from(tableName)
+          .update(tableUpdates)
+          .eq("user_id", userId)
+          .select("id")
+          .maybeSingle();
 
       if (error) {
         console.error("Profile update failed:", {
@@ -303,10 +339,19 @@ export class ProfileRepository {
       }
 
       if (!data) {
+        const upsertData = practitioner 
+          ? { user_id: userId, ...tableUpdates }
+          : { 
+              user_id: userId, 
+              date_of_birth: '1970-01-01', 
+              gender: 'other',
+              ...tableUpdates 
+            };
+
         // Fallback: upsert profile row if it doesn't exist yet for this user
         const { error: upsertErr } = await this.supabase
           .from(tableName)
-          .upsert({ user_id: userId, ...tableUpdates }, { onConflict: "user_id" });
+          .upsert(upsertData, { onConflict: "user_id" });
 
         if (upsertErr) {
           console.error("Profile upsert failed:", {
@@ -322,6 +367,7 @@ export class ProfileRepository {
           );
         }
       }
+    }
     }
 
     const userUpdates: Record<string, unknown> = {};

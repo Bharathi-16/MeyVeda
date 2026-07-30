@@ -31,6 +31,7 @@ import {
   Video, MapPin, CheckCircle2, Clock, History, Activity
 } from "lucide-react";
 
+
 const STATUS_CONFIG: Record<QueueStatus, { label: string; color: string; dot: string }> = {
   waiting:     { label: "Waiting",    color: "bg-amber-50 text-amber-700 border border-amber-200", dot: "bg-amber-400" },
   "checked-in":{ label: "Checked In", color: "bg-indigo-50 text-indigo-700 border border-indigo-200", dot: "bg-indigo-400" },
@@ -497,7 +498,6 @@ export default function ProDashboardPage() {
                     ))}
                   </div>
                 </div>
-
               </div>
             </div>
           </>

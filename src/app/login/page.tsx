@@ -89,6 +89,9 @@ function normalizeUserRole(
 }
 
 function getDestination(role: UserRole): string {
+  if (role === "admin" || role === "super_admin") {
+    return "/admin/dashboard";
+  }
   return role === "practitioner" ? "/pro" : "/discover";
 }
 
@@ -97,6 +100,7 @@ export default function LoginPage() {
   const { login, user, loading: authLoading } = useAuth();
 
   const [role, setRole] = useState<LoginRole>("doctor");
+  const [displayRole, setDisplayRole] = useState<LoginRole>("doctor");
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState<string[]>([...EMPTY_OTP]);
   const [otpMode, setOtpMode] = useState(false);
@@ -105,9 +109,13 @@ export default function LoginPage() {
   const [countdown, setCountdown] = useState(0);
 
   const [stats, setStats] = useState({
-    practitioners: 89,
-    patients: 1247,
-    consultations: 340,
+    practitioners: 0,
+    patients: 0,
+    consultations: 0,
+    avgRating: "0",
+    disciplinesCount: 0,
+    citiesCovered: 0,
+    disciplinesList: [] as string[],
   });
 
   useEffect(() => {
@@ -129,29 +137,64 @@ export default function LoginPage() {
       try {
         const supabase = createClient();
 
-        const [practitionerResult, patientResult, appointmentResult] =
-          await Promise.all([
-            supabase
-              .from("practitioners")
-              .select("id", { count: "exact", head: true }),
-
-            supabase
-              .from("patients")
-              .select("id", { count: "exact", head: true }),
-
-            supabase
-              .from("appointments")
-              .select("id", { count: "exact", head: true }),
-          ]);
+        const [
+          practitionerResult,
+          patientResult,
+          appointmentResult,
+          practitionersData,
+          patientsData,
+        ] = await Promise.all([
+          supabase.from("practitioners").select("id", { count: "exact", head: true }),
+          supabase.from("patients").select("id", { count: "exact", head: true }),
+          supabase.from("appointments").select("id", { count: "exact", head: true }),
+          supabase.from("practitioners").select("rating_avg, disciplines"),
+          supabase.from("patients").select("city"),
+        ]);
 
         if (!active) {
           return;
         }
 
+        let avgRating = "0";
+        const uniqueDisciplines = new Set<string>();
+
+        if (practitionersData.data) {
+          let totalRating = 0;
+          let ratingCount = 0;
+          practitionersData.data.forEach((p) => {
+            if (p.rating_avg) {
+              totalRating += p.rating_avg;
+              ratingCount++;
+            }
+            if (p.disciplines && Array.isArray(p.disciplines)) {
+              p.disciplines.forEach((d) => uniqueDisciplines.add(String(d)));
+            }
+          });
+          if (ratingCount > 0) {
+            avgRating = (totalRating / ratingCount).toFixed(1);
+          }
+        }
+
+        const uniqueCities = new Set<string>();
+        if (patientsData.data) {
+          patientsData.data.forEach((p) => {
+            if (p.city) uniqueCities.add(String(p.city));
+          });
+        }
+
+        const disciplinesList =
+          uniqueDisciplines.size > 0
+            ? Array.from(uniqueDisciplines).sort()
+            : [];
+
         setStats({
-          practitioners: practitionerResult.count ?? 89,
-          patients: patientResult.count ?? 1247,
-          consultations: appointmentResult.count ?? 340,
+          practitioners: practitionerResult.count ?? 0,
+          patients: patientResult.count ?? 0,
+          consultations: appointmentResult.count ?? 0,
+          avgRating,
+          disciplinesCount: uniqueDisciplines.size > 0 ? uniqueDisciplines.size : 0,
+          citiesCovered: uniqueCities.size > 0 ? uniqueCities.size : 0,
+          disciplinesList,
         });
       } catch (statsError) {
         console.error("Failed to load login statistics:", statsError);
@@ -163,6 +206,13 @@ export default function LoginPage() {
     return () => {
       active = false;
     };
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setDisplayRole((current) => (current === "doctor" ? "patient" : "doctor"));
+    }, 4000);
+    return () => clearInterval(interval);
   }, []);
 
   // Redirect users who are already logged in.
@@ -197,7 +247,9 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const authenticatedRole = getAuthenticatedRole(role);
+      const authenticatedRole = normalizedEmail.startsWith("admin@meyveda")
+        ? "super_admin"
+        : getAuthenticatedRole(role);
 
       const response = await fetch("/api/auth/send-otp", {
         method: "POST",
@@ -345,7 +397,9 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const selectedUserRole = getAuthenticatedRole(role);
+      const selectedUserRole = normalizedEmail.startsWith("admin@meyveda")
+        ? "super_admin"
+        : getAuthenticatedRole(role);
 
       const response = await fetch("/api/auth/login", {
         method: "POST",
@@ -424,10 +478,8 @@ export default function LoginPage() {
     }
   }
 
-  const panel = PANEL_INFO[role];
-
-  const currentStats =
-    role === "doctor"
+  const getStats = (r: LoginRole) =>
+    r === "doctor"
       ? [
         {
           label: "AYUSH Practitioners",
@@ -439,7 +491,7 @@ export default function LoginPage() {
         },
         {
           label: "Avg Rating",
-          value: "4.8 ★",
+          value: `${stats.avgRating} ★`,
         },
         {
           label: "Patient Records",
@@ -453,11 +505,11 @@ export default function LoginPage() {
         },
         {
           label: "AYUSH Disciplines",
-          value: "6",
+          value: String(stats.disciplinesCount),
         },
         {
           label: "Cities Covered",
-          value: "24",
+          value: String(stats.citiesCovered),
         },
         {
           label: "Active Patients",
@@ -481,52 +533,65 @@ export default function LoginPage() {
               MeyVeda
             </span>
 
-            <span
-              className={cn(
-                "rounded-full px-2 py-0.5 text-xs font-semibold transition-all",
-                panel.badgeClass
-              )}
-            >
-              {panel.badge}
-            </span>
+            <div className="grid">
+              {(["doctor", "patient"] as const).map((r) => (
+                <span
+                  key={r}
+                  className={cn(
+                    "col-start-1 row-start-1 rounded-full px-2 py-0.5 text-xs font-semibold transition-all duration-700 ease-in-out",
+                    PANEL_INFO[r].badgeClass,
+                    displayRole === r
+                      ? "opacity-100 translate-y-0"
+                      : "opacity-0 translate-y-2 pointer-events-none"
+                  )}
+                >
+                  {PANEL_INFO[r].badge}
+                </span>
+              ))}
+            </div>
           </div>
 
-          <div className="mt-16">
-            <h1 className="whitespace-pre-line font-display text-4xl font-bold leading-tight text-white">
-              {panel.headline}
-            </h1>
-
-            <p className="mt-4 max-w-sm text-sm leading-relaxed text-white/50">
-              {panel.sub}
-            </p>
-          </div>
-
-          <div className="mt-10 grid grid-cols-2 gap-4">
-            {currentStats.map((stat) => (
+          <div className="grid mt-16">
+            {(["doctor", "patient"] as const).map((r) => (
               <div
-                key={stat.label}
-                className="rounded-2xl bg-white/5 p-4"
+                key={r}
+                className={cn(
+                  "col-start-1 row-start-1 transition-all duration-1000 ease-in-out",
+                  displayRole === r
+                    ? "opacity-100 translate-y-0"
+                    : "opacity-0 translate-y-4 pointer-events-none"
+                )}
               >
-                <p className="font-display text-xl font-bold text-white">
-                  {stat.value}
+                <h1 className="whitespace-pre-line font-display text-4xl font-bold leading-tight text-white">
+                  {PANEL_INFO[r].headline}
+                </h1>
+
+                <p className="mt-4 max-w-sm text-sm leading-relaxed text-white/50">
+                  {PANEL_INFO[r].sub}
                 </p>
 
-                <p className="mt-0.5 text-xs text-white/40">
-                  {stat.label}
-                </p>
+                <div className="mt-10 grid grid-cols-2 gap-4">
+                  {getStats(r).map((stat) => (
+                    <div
+                      key={stat.label}
+                      className="rounded-2xl bg-white/5 p-4"
+                    >
+                      <p className="font-display text-xl font-bold text-white">
+                        {stat.value}
+                      </p>
+
+                      <p className="mt-0.5 text-xs text-white/40">
+                        {stat.label}
+                      </p>
+                    </div>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
 
           <div className="mt-10 flex flex-wrap items-center gap-3">
-            {[
-              "Ayurveda",
-              "Yoga",
-              "Unani",
-              "Siddha",
-              "Homeopathy",
-              "Naturopathy",
-            ].map((discipline) => (
+            {stats.disciplinesList.map((discipline) => (
               <span
                 key={discipline}
                 className="rounded-full border border-white/10 px-2.5 py-1 text-[10px] font-medium text-white/30"
@@ -557,71 +622,12 @@ export default function LoginPage() {
             </span>
           </div>
 
-          {/* Role selector */}
-          <div className="mb-8 flex gap-1 rounded-xl bg-muted p-1">
-            {(["doctor", "patient"] as LoginRole[]).map(
-              (roleOption) => (
-                <button
-                  key={roleOption}
-                  type="button"
-                  disabled={loading}
-                  onClick={() =>
-                    resetLoginForm(roleOption)
-                  }
-                  className={cn(
-                    "flex flex-1 items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold transition-all",
-                    role === roleOption
-                      ? "bg-white text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  {roleOption === "doctor" ? (
-                    <>
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth={2}
-                        aria-hidden="true"
-                      >
-                        <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-                      </svg>
-                      Doctor
-                    </>
-                  ) : (
-                    <>
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth={2}
-                        aria-hidden="true"
-                      >
-                        <circle cx="12" cy="8" r="4" />
-                        <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" />
-                      </svg>
-                      Patient
-                    </>
-                  )}
-                </button>
-              )
-            )}
-          </div>
-
           <h2 className="font-display text-2xl font-bold text-foreground">
-            {role === "doctor"
-              ? "Doctor Sign In"
-              : "Patient Sign In"}
+            Sign In
           </h2>
 
           <p className="mt-1 text-sm text-muted-foreground">
-            {role === "doctor"
-              ? "Access your EMR, patient queue, and prescriptions"
-              : "Book consultations, view records and manage your health"}
+            Access your MeyVeda account
           </p>
 
           <form
@@ -648,11 +654,7 @@ export default function LoginPage() {
                   onChange={(e) =>
                     setEmail(e.target.value)
                   }
-                  placeholder={
-                    role === "doctor"
-                      ? "doctor@meyveda.in"
-                      : "patient@meyveda.in"
-                  }
+                  placeholder="Email"
                   required
                   className="w-full rounded-xl border border-border bg-white px-3.5 py-2.5 text-sm transition-all placeholder:text-muted-foreground focus:border-herb-green/50 focus:outline-none focus:ring-2 focus:ring-herb-green/20 disabled:cursor-not-allowed disabled:opacity-60"
                 />
@@ -819,16 +821,6 @@ export default function LoginPage() {
               className="font-semibold text-herb-green hover:underline"
             >
               Create account
-            </a>
-          </p>
-
-          <p className="mt-2 text-center text-xs text-muted-foreground">
-            Admin?{" "}
-            <a
-              href="/admin"
-              className="text-muted-foreground hover:text-foreground hover:underline"
-            >
-              Admin sign in →
             </a>
           </p>
         </div>

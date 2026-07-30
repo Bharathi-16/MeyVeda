@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/auth-context";
 
 const NAV = [
   { href: "/admin/dashboard", label: "Dashboard", icon: "▦" },
@@ -12,30 +13,26 @@ const NAV = [
   { href: "/admin/patients", label: "Patients", icon: "👥" },
   { href: "/admin/medicines", label: "Medicines", icon: "💊" },
   { href: "/admin/orders", label: "Orders", icon: "📦" },
+  { href: "/admin/profile", label: "Profile", icon: "👤" },
 ];
 
 export default function AdminAppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [admin, setAdmin] = useState<{ name: string; email: string } | null>(null);
+  const { user, loading, logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("mv_admin");
-      if (!stored) { router.replace("/admin"); return; }
-      setAdmin(JSON.parse(stored));
-    } catch {
-      router.replace("/admin");
+    if (!loading && (!user || (user.role !== "admin" && user.role !== "super_admin"))) {
+      router.replace("/login");
     }
-  }, [router]);
+  }, [user, loading, router]);
 
   function handleSignOut() {
-    localStorage.removeItem("mv_admin");
-    router.push("/admin");
+    logout();
   }
 
-  if (!admin) return null;
+  if (loading || !user) return null;
 
   const Sidebar = () => (
     <aside className="w-60 flex-shrink-0 flex flex-col h-full" style={{ background: "oklch(0.14 0.030 268)" }}>
@@ -82,8 +79,8 @@ export default function AdminAppLayout({ children }: { children: React.ReactNode
             <span className="text-herb-green text-xs font-bold">A</span>
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-white text-xs font-semibold truncate">{admin.name}</p>
-            <p className="text-white/40 text-[10px] truncate">{admin.email}</p>
+            <p className="text-white text-xs font-semibold truncate">{user.name}</p>
+            <p className="text-white/40 text-[10px] truncate">{user.email}</p>
           </div>
           <button onClick={handleSignOut} title="Sign out" className="text-white/40 hover:text-white transition-colors">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
@@ -123,7 +120,7 @@ export default function AdminAppLayout({ children }: { children: React.ReactNode
           </button>
           <div className="flex items-center gap-2 ml-auto">
             <span className="text-xs bg-herb-green/10 text-herb-green font-semibold px-2 py-0.5 rounded-full">Admin</span>
-            <span className="text-sm font-medium text-foreground">{admin.name}</span>
+            <span className="text-sm font-medium text-foreground">{user.name}</span>
           </div>
         </header>
 
