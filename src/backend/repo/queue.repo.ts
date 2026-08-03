@@ -25,9 +25,10 @@ export class QueueRepository {
     return data?.id ?? null;
   }
 
-  static async getTodayQueue(practitionerId: string): Promise<any[]> {
+  static async getTodayQueue(practitionerId: string, targetDateStr?: string): Promise<any[]> {
     const supabase = await createClient();
-    const today = new Date().toLocaleDateString("en-CA");
+    const todayStr = new Date().toLocaleDateString("en-CA");
+    const targetDate = targetDateStr || todayStr;
 
     const { data: appointments, error } = await supabase
       .from("appointments")
@@ -54,12 +55,12 @@ export class QueueRepository {
         )
       `)
       .eq("practitioner_id", practitionerId)
-      .eq("scheduled_date", today)
+      .eq("scheduled_date", targetDate)
       .order("scheduled_time", { ascending: true });
 
     if (error) {
       console.error("[QueueRepository] Error fetching queue:", error.message);
-      throw new Error("Failed to fetch today's queue from database");
+      throw new Error("Failed to fetch queue from database");
     }
 
     return (appointments || []).map((appt: any) => {
@@ -81,15 +82,17 @@ export class QueueRepository {
       }
 
       let waitMins = 0;
-      if (appt.checked_in_at && appt.status === "checked_in") {
-        const checkedInTime = new Date(appt.checked_in_at).getTime();
-        waitMins = Math.floor((Date.now() - checkedInTime) / 60000);
-      } else if (appt.status === "scheduled") {
-        const [hours, minutes] = appt.scheduled_time.split(":");
-        const scheduledTime = new Date();
-        scheduledTime.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0, 0);
-        const diff = Math.floor((Date.now() - scheduledTime.getTime()) / 60000);
-        waitMins = diff > 0 ? diff : 0;
+      if (targetDate === todayStr) {
+        if (appt.checked_in_at && appt.status === "checked_in") {
+          const checkedInTime = new Date(appt.checked_in_at).getTime();
+          waitMins = Math.floor((Date.now() - checkedInTime) / 60000);
+        } else if (appt.status === "scheduled" && appt.scheduled_time) {
+          const [hours, minutes] = appt.scheduled_time.split(":");
+          const scheduledTime = new Date();
+          scheduledTime.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0, 0);
+          const diff = Math.floor((Date.now() - scheduledTime.getTime()) / 60000);
+          waitMins = diff > 0 ? diff : 0;
+        }
       }
 
       let mappedStatus = "waiting";
@@ -110,6 +113,34 @@ export class QueueRepository {
         abha: abhaId,
       };
     });
+  }
+
+  static async getMonthCounts(practitionerId: string, year: number, month: number): Promise<Record<string, number>> {
+    const supabase = await createClient();
+    const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
+    const lastDay = new Date(year, month, 0).getDate();
+    const endDate = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+
+    const { data: appointments, error } = await supabase
+      .from("appointments")
+      .select("scheduled_date")
+      .eq("practitioner_id", practitionerId)
+      .gte("scheduled_date", startDate)
+      .lte("scheduled_date", endDate);
+
+    if (error) {
+      console.error("[QueueRepository] Error fetching month counts:", error.message);
+      return {};
+    }
+
+    const counts: Record<string, number> = {};
+    (appointments || []).forEach((appt: any) => {
+      if (appt.scheduled_date) {
+        counts[appt.scheduled_date] = (counts[appt.scheduled_date] || 0) + 1;
+      }
+    });
+
+    return counts;
   }
 
   static async getUpcomingAppointments(practitionerId: string): Promise<any[]> {

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
-import type { AppointmentRow } from "@/features/appointments/appointments.type"; 
+import type { AppointmentRow } from "@/features/appointments/appointments.type";
 import {
   Calendar,
   CheckCircle2,
@@ -25,7 +25,7 @@ import {
   Star,
   ChevronRight,
   FileText,
-  Zap
+  Zap,
 } from "lucide-react";
 
 type Tab = "upcoming" | "past" | "cancelled";
@@ -627,10 +627,12 @@ export default function AppointmentsPage() {
 
                       {/* Join consultation */}
                       {isUpcoming && appt.mode === "video" && (
-                        <Link href="/waiting-room" className="flex-1 min-w-[120px]">
-                          <button className="w-full py-2.5 px-4 bg-herb-green hover:bg-herb-green-light active:scale-98 font-bold text-xs text-white rounded-xl shadow-xs transition-all cursor-pointer">
-                            Join Room
-                          </button>
+                        <Link
+                          href={`/waiting-room?appointmentId=${encodeURIComponent(appt.id)}`}
+                          className="inline-flex items-center justify-center rounded-xl bg-herb-green px-4 py-3 font-semibold text-white transition-colors hover:bg-herb-green/90"
+                        >
+                          <Video size={15} />
+                          <span className="ml-2">Join Consultation</span>
                         </Link>
                       )}
 

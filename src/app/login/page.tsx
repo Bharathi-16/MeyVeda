@@ -92,7 +92,7 @@ function getDestination(role: UserRole): string {
   if (role === "admin" || role === "super_admin") {
     return "/admin/dashboard";
   }
-  return role === "practitioner" ? "/pro" : "/discover";
+  return role === "practitioner" ? "/pro" : "/";
 }
 
 export default function LoginPage() {

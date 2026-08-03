@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -10,6 +10,8 @@ import { apiClient } from "@/shared/api/api-client";
 import { useNewDoctorProfile } from "@/hooks/use-new-doctor";
 import { usePractitioner } from "@/hooks/use-discover";
 import { usePractitionerSlots, usePractitionerAvailableDates } from "@/hooks/use-availability";
+import { useAppointments } from "@/hooks/use-appointments";
+import { useAuth } from "@/contexts/auth-context";
 import { formatCurrency, cn } from "@/lib/utils";
 
 function useReviews(practId: string | undefined) {
@@ -74,6 +76,25 @@ function getPeriod(timeStr: string): "Morning" | "Afternoon" | "Evening" {
   }
 }
 
+/**
+ * Reliably parses a backend-formatted time string like "9:50 AM" or "12:05 PM"
+ * combined with a YYYY-MM-DD date string into a local Date object.
+ * `new Date("YYYY-MM-DD H:MM AM")` is non-standard and returns NaN in many
+ * environments, so we parse manually instead.
+ */
+function parseSlotDateTime(dateStr: string, timeStr: string): Date | null {
+  const match = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!match) return null;
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const period = match[3].toUpperCase();
+  if (period === "PM" && hours !== 12) hours += 12;
+  if (period === "AM" && hours === 12) hours = 0;
+  const [year, month, day] = dateStr.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day, hours, minutes, 0, 0);
+}
+
 const disciplineStyles: Record<string, { bg: string; text: string; border: string; gradient: string }> = {
   Ayurveda: {
     bg: "bg-emerald-50 text-emerald-800 border-emerald-100",
@@ -116,7 +137,11 @@ const disciplineStyles: Record<string, { bg: string; text: string; border: strin
 export default function DoctorProfileClient() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const { user } = useAuth();
   const [wishlisted, setWishlisted] = useState(false);
+
+  // Fetch current patient's appointments to detect their booked slots
+  const { data: myAppointments } = useAppointments(user?.id);
 
   // Fetch legacy doctor
   const { data: legacyDoc, loading: legacyDocLoading } = usePractitioner(id);
@@ -165,6 +190,13 @@ export default function DoctorProfileClient() {
 
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
+
+  // Live clock — refreshes every 60 s so past slots auto-disappear
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Available dates queries
   const { data: legacyDates, loading: legacyDatesLoading } = usePractitionerAvailableDates(id);
@@ -253,6 +285,18 @@ export default function DoctorProfileClient() {
   const { data: rawReviews, loading: reviewsLoading } = useReviews(id);
   const reviews = rawReviews ?? [];
 
+  // Derive the current patient's booked slot for this doctor + selected date
+  // Must be declared BEFORE any early returns to satisfy Rules of Hooks.
+  const myBookedSlotForThisDate = useMemo(() => {
+    if (!myAppointments || !selectedDate) return null;
+    return myAppointments.find((appt) => {
+      const isSameDoctor = appt.practitionerId === id;
+      const isSameDate = appt.dateRaw === selectedDate;
+      const isActive = appt.status === "upcoming";
+      return isSameDoctor && isSameDate && isActive;
+    }) ?? null;
+  }, [myAppointments, selectedDate, id]);
+
   if (legacyDocLoading && newDocLoading) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -278,16 +322,17 @@ export default function DoctorProfileClient() {
     );
   }
 
-  // Filter out slots that have already passed if viewing today's date
-  const now = new Date();
+  // Filter out slots whose time has already passed (runs live every 60 s)
   const validSlots = slots.filter(slot => {
     const slotTimeStr = slot.timeValue || slot.startTime;
-    const slotDateTime = new Date(`${selectedDate} ${slotTimeStr}`);
-    if (!isNaN(slotDateTime.getTime())) {
+    const slotDateTime = parseSlotDateTime(selectedDate, slotTimeStr);
+    if (slotDateTime) {
       return slotDateTime.getTime() > now.getTime();
     }
+    // If we can't parse the time, keep the slot visible (safe default)
     return true;
   });
+
 
   // Group slots by Morning, Afternoon, Evening
   const groupedSlots: Record<"Morning" | "Afternoon" | "Evening", typeof validSlots> = {
@@ -693,18 +738,47 @@ export default function DoctorProfileClient() {
 
             {/* Grouped slots block */}
             <div className="space-y-4">
+              {/* My booked slot for this date — always shown at the top if exists */}
+              {myBookedSlotForThisDate && (
+                <div className="bg-amber-50 border border-amber-300 rounded-2xl p-3 flex items-center gap-2.5 shadow-sm">
+                  <div className="w-7 h-7 rounded-lg bg-amber-400/20 flex items-center justify-center flex-shrink-0">
+                    <Check size={14} className="text-amber-600" strokeWidth={3} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[11px] font-extrabold text-amber-800 uppercase tracking-wider">Your Booking</p>
+                    <p className="text-xs font-bold text-amber-900 mt-0.5">
+                      {myBookedSlotForThisDate.date.split(/ · |, /)[1] || myBookedSlotForThisDate.date.split("T")[0]}
+                    </p>
+                  </div>
+                  <span className="text-[10px] bg-amber-400/30 text-amber-800 font-bold px-2 py-1 rounded-lg border border-amber-300/60 flex-shrink-0">
+                    ✓ Confirmed
+                  </span>
+                </div>
+              )}
+
               {slotsLoading ? (
                 <div className="text-center text-xs text-muted-foreground py-8">
                   <div className="w-5 h-5 rounded-full border-2 border-herb-green border-t-transparent animate-spin mx-auto mb-2" />
                   Loading available slots...
                 </div>
-              ) : totalSlotsCount === 0 ? (
+              ) : totalSlotsCount === 0 && !myBookedSlotForThisDate ? (
                 <div className="text-center text-xs text-amber-600 bg-amber-50 rounded-xl p-4 border border-amber-100 font-semibold leading-relaxed">
                   ⚠️ No open consultation slots found on this date.
                 </div>
+              ) : totalSlotsCount === 0 && myBookedSlotForThisDate ? (
+                <div className="text-center text-xs text-muted-foreground bg-neutral-50 rounded-xl p-3 border border-neutral-200 font-medium">
+                  All other slots are filled for this date.
+                </div>
               ) : (
                 Object.entries(groupedSlots).map(([period, periodSlots]) => {
-                  if (periodSlots.length === 0) return null;
+                  // Extract my booked time string for this period comparison
+                  const myBookedTimeStr = myBookedSlotForThisDate
+                    ? (myBookedSlotForThisDate.date.split(/ · |, /)[1] || "").trim()
+                    : null;
+                  const myBookedPeriodForSlot = myBookedTimeStr ? getPeriod(myBookedTimeStr) : null;
+                  const showMySlotInThisPeriod = myBookedPeriodForSlot === period && myBookedSlotForThisDate;
+
+                  if (periodSlots.length === 0 && !showMySlotInThisPeriod) return null;
                   
                   const periodIcon = period === "Morning" ? <CloudSun size={15} className="text-blue-900" /> :
                                      period === "Afternoon" ? <Sun size={14} className="text-blue-900" /> :
@@ -717,12 +791,20 @@ export default function DoctorProfileClient() {
                         <span>{period}</span>
                       </p>
                       <div className="flex flex-wrap gap-1.5">
+                        {/* Render my booked slot in amber within its time period group */}
+                        {showMySlotInThisPeriod && myBookedSlotForThisDate && (
+                          <div
+                            className="text-[11px] px-3 py-1.5 rounded-xl border border-amber-400 bg-amber-400/20 text-amber-800 font-bold shadow-sm flex items-center gap-1 cursor-default select-none"
+                            title="You have booked this slot"
+                          >
+                            <Check size={11} className="text-amber-600" strokeWidth={3} />
+                            <span>{myBookedSlotForThisDate.date.split(/ · |, /)[1] || "—"}</span>
+                          </div>
+                        )}
+
                         {periodSlots.map((slot) => {
                           const isActiveSlot = selectedSlot?.id === slot.id;
                           const slotModes: ("video" | "clinic")[] = slot.modes || (slot.mode ? [slot.mode] : []);
-                          const hasVideo = slotModes.includes("video");
-                          const hasClinic = slotModes.includes("clinic");
-                          const isBoth = hasVideo && hasClinic;
 
                           const baseClass = isActiveSlot
                             ? "bg-black text-white border-black font-bold shadow-3xs"

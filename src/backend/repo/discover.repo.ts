@@ -1,5 +1,7 @@
 import { createClient } from "@/shared/db/supabase.server";
 import type { Practitioner } from "@/features/doctor/types/doctor.types";
+import { bookingMutex, toHHMM } from "./booking.repo";
+
 
 export type DiscoverMetadata = {
   symptoms: string[];
@@ -416,52 +418,60 @@ export class DiscoverRepository {
 
     const resolvedPatientId = await this.resolvePatientIdForBooking(params.userId);
 
-    // Validate if slot is already taken by appointment or upcoming call
-    const { data: existingAppt } = await supabase
-      .from("appointments")
-      .select("id")
-      .eq("doctor_profile_id", params.doctorProfileId)
-      .eq("scheduled_date", params.date)
-      .eq("scheduled_time", params.time)
-      .neq("status", "cancelled")
-      .maybeSingle();
+    const formattedTime = toHHMM(params.time);
+    const lockKey = `${params.doctorProfileId}_${params.date}_${formattedTime}`;
+    const release = await bookingMutex.acquire(lockKey);
 
-    if (existingAppt) {
-      throw new Error("Slot no longer available.");
-    }
+    try {
+      // Validate if slot is already taken by appointment or upcoming call
+      const { data: existingAppt } = await supabase
+        .from("appointments")
+        .select("id")
+        .eq("doctor_profile_id", params.doctorProfileId)
+        .eq("scheduled_date", params.date)
+        .eq("scheduled_time", formattedTime)
+        .neq("status", "cancelled")
+        .maybeSingle();
 
-    const timeVal = params.time.slice(0, 5);
-    const { data: existingUpcoming } = await supabase
-      .from("prescriptions")
-      .select("id")
-      .eq("practitioner_id", params.doctorProfileId)
-      .like("lifestyle_advice", `%[Upcoming Session Fixed: ${params.date} at ${timeVal}]%`)
-      .limit(1)
-      .maybeSingle();
+      if (existingAppt) {
+        throw new Error("Slot no longer available.");
+      }
 
-    if (existingUpcoming) {
-      throw new Error("Slot no longer available.");
-    }
+      const { data: existingUpcoming } = await supabase
+        .from("prescriptions")
+        .select("id")
+        .eq("practitioner_id", params.doctorProfileId)
+        .like("lifestyle_advice", `%[Upcoming Session Fixed: ${params.date} at ${formattedTime}]%`)
+        .limit(1)
+        .maybeSingle();
 
-    const { error: apptError } = await supabase.from("appointments").insert({
-      patient_profile_id: patientProfile.id,
-      patient_id: resolvedPatientId,
-      doctor_profile_id: params.doctorProfileId,
-      practitioner_id: params.doctorProfileId,
-      family_member_id: params.familyMemberId || null,
-      mode: params.mode,
-      status: "scheduled",
-      reason_for_visit: params.reason,
-      scheduled_date: params.date,
-      scheduled_time: params.time,
-      duration_min: 30,
-    });
+      if (existingUpcoming) {
+        throw new Error("Slot no longer available.");
+      }
 
-    if (apptError) {
-      console.error("[DiscoverRepository] bookNewDoctorAppointment error:", apptError.message);
-      throw apptError;
+      const { error: apptError } = await supabase.from("appointments").insert({
+        patient_profile_id: patientProfile.id,
+        patient_id: resolvedPatientId,
+        doctor_profile_id: params.doctorProfileId,
+        practitioner_id: params.doctorProfileId,
+        family_member_id: params.familyMemberId || null,
+        mode: params.mode,
+        status: "scheduled",
+        reason_for_visit: params.reason,
+        scheduled_date: params.date,
+        scheduled_time: formattedTime,
+        duration_min: 30,
+      });
+
+      if (apptError) {
+        console.error("[DiscoverRepository] bookNewDoctorAppointment error:", apptError.message);
+        throw apptError;
+      }
+    } finally {
+      release();
     }
   }
+
 
   private static async resolvePatientIdForBooking(userId: string): Promise<string> {
     const supabase = await createClient();

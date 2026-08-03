@@ -104,6 +104,9 @@ export default function AvailabilityPage() {
     }
   };
 
+  const todayKey = formatDateKey(today);
+  const isPrevDisabled = currentYear < today.getFullYear() || (currentYear === today.getFullYear() && currentMonth <= today.getMonth());
+
   const handleDateSelect = (dateStr: string) => {
     setSelectedDate(dateStr);
   };
@@ -201,7 +204,14 @@ export default function AvailabilityPage() {
           <div className="bg-white rounded-3xl p-5 border border-neutral-150 shadow-sm">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
-                <button onClick={prevMonth} className="p-1 border border-neutral-200 rounded-full hover:bg-neutral-50">
+                <button 
+                  onClick={prevMonth} 
+                  disabled={isPrevDisabled}
+                  className={cn(
+                    "p-1 border border-neutral-200 rounded-full",
+                    isPrevDisabled ? "opacity-50 cursor-not-allowed bg-neutral-50" : "hover:bg-neutral-50"
+                  )}
+                >
                   <ChevronLeft size={16} />
                 </button>
                 <h2 className="text-sm font-bold font-display">{getMonthName(currentMonth, currentYear)}</h2>
@@ -231,6 +241,7 @@ export default function AvailabilityPage() {
               {calendarDays.map((d, i) => {
                 if (!d) return <div key={`empty-${i}`} className="h-8" />;
                 
+                const isPast = d.dateStr < todayKey;
                 const isSelected = selectedDate === d.dateStr;
                 const statusClass = getDateStatusClass(d.dateStr);
 
@@ -238,10 +249,12 @@ export default function AvailabilityPage() {
                   <button
                     key={d.dateStr}
                     onClick={() => handleDateSelect(d.dateStr)}
+                    disabled={isPast}
                     className={cn(
                       "h-8 w-full flex items-center justify-center rounded-lg text-xs transition-all",
                       isSelected ? "bg-[#254EDb] text-white font-bold shadow-sm ring-2 ring-[#254EDb]/20 ring-offset-1" : statusClass,
-                      !isSelected && "hover:bg-neutral-100 border border-transparent"
+                      !isSelected && !isPast && "hover:bg-neutral-100 border border-transparent",
+                      isPast && "opacity-40 cursor-not-allowed border-transparent"
                     )}
                   >
                     {d.day}

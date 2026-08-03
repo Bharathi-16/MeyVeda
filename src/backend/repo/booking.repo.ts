@@ -107,6 +107,55 @@ function formatTime(time?: string | null): string {
   });
 }
 
+/**
+ * Converts a display-format time string ("4:05 PM", "12:30 AM", or already
+ * 24-hour "16:05") into a zero-padded HH:MM string suitable for PostgreSQL
+ * `time` / `timetz` columns.
+ *
+ * The bug this fixes: `params.time` comes from the availability API as
+ * "4:05 PM". Slicing to 5 chars gives "4:05 " which Postgres stores as
+ * 04:05:00 (4 AM instead of 4 PM).
+ */
+export function toHHMM(timeStr: string): string {
+  // Already in HH:MM or HH:MM:SS 24-hour format (no AM/PM)
+  if (!/AM|PM/i.test(timeStr)) {
+    return timeStr.slice(0, 5);
+  }
+  const match = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!match) {
+    // Fallback: strip trailing chars and hope for the best
+    return timeStr.slice(0, 5);
+  }
+  let hours = parseInt(match[1], 10);
+  const minutes = match[2];
+  const period = match[3].toUpperCase();
+  if (period === "PM" && hours !== 12) hours += 12;
+  if (period === "AM" && hours === 12) hours = 0;
+  return `${String(hours).padStart(2, "0")}:${minutes}`;
+}
+
+class Mutex {
+  private activeLocks = new Map<string, Promise<void>>();
+
+  async acquire(key: string): Promise<() => void> {
+    while (this.activeLocks.has(key)) {
+      await this.activeLocks.get(key);
+    }
+    let resolveLock!: () => void;
+    const promise = new Promise<void>((resolve) => {
+      resolveLock = resolve;
+    });
+    this.activeLocks.set(key, promise);
+    return () => {
+      this.activeLocks.delete(key);
+      resolveLock();
+    };
+  }
+}
+
+export const bookingMutex = new Mutex();
+
+
 async function resolvePatientId(userId: string): Promise<string> {
   const supabase = createClient();
 
@@ -273,72 +322,97 @@ export class BookingRepository {
   ): Promise<void> {
     const supabase = createClient();
     const resolvedPatientId = await resolvePatientId(params.userId);
-    const formattedTime = params.time.slice(0, 5);
+    // Convert display-format time ("4:05 PM") → 24-hour HH:MM ("16:05")
+    // The old slice(0,5) was giving "4:05 " which Postgres stored as 04:05 (4 AM)
+    const formattedTime = toHHMM(params.time);
 
-    const { data: existingAppointment, error: appointmentCheckError } =
-      await supabase
-        .from("appointments")
+    // Acquire lock to serialize concurrent attempts to book the exact same slot
+    const lockKey = `${params.practitionerId}_${params.date}_${formattedTime}`;
+    const release = await bookingMutex.acquire(lockKey);
+
+    try {
+      const { data: existingAppointment, error: appointmentCheckError } =
+        await supabase
+          .from("appointments")
+          .select("id")
+          .eq("practitioner_id", params.practitionerId)
+          .eq("scheduled_date", params.date)
+          .eq("scheduled_time", formattedTime)
+          .neq("status", "cancelled")
+          .limit(1)
+          .maybeSingle();
+
+      if (appointmentCheckError) {
+        throw new Error(appointmentCheckError.message);
+      }
+
+      if (existingAppointment) {
+        throw new Error("Slot is no longer available");
+      }
+
+      const { data: existingUpcoming } = await supabase
+        .from("prescriptions")
         .select("id")
         .eq("practitioner_id", params.practitionerId)
-        .eq("scheduled_date", params.date)
-        .eq("scheduled_time", formattedTime)
-        .neq("status", "cancelled")
+        .like("lifestyle_advice", `%[Upcoming Session Fixed: ${params.date} at ${formattedTime}]%`)
         .limit(1)
         .maybeSingle();
 
-    if (appointmentCheckError) {
-      throw new Error(appointmentCheckError.message);
-    }
+      if (existingUpcoming) {
+        throw new Error("Slot is no longer available");
+      }
 
-    if (existingAppointment) {
-      throw new Error("Slot is no longer available");
-    }
+      // Atomically update the slot status from 'open' to 'booked'.
+      // If 0 rows are updated, another request has already claimed this slot.
+      const { data: updatedSlots, error: slotUpdateError } = await supabase
+        .from("slots")
+        .update({ status: "booked" })
+        .eq("id", params.slotId)
+        .eq("status", "open")
+        .select("id");
 
-    const { data: existingUpcoming } = await supabase
-      .from("prescriptions")
-      .select("id")
-      .eq("practitioner_id", params.practitionerId)
-      .like("lifestyle_advice", `%[Upcoming Session Fixed: ${params.date} at ${formattedTime}]%`)
-      .limit(1)
-      .maybeSingle();
+      if (slotUpdateError) {
+        console.error("bookAppointment slot error:", slotUpdateError);
+        throw new Error(slotUpdateError.message);
+      }
 
-    if (existingUpcoming) {
-      throw new Error("Slot is no longer available");
-    }
+      if (!updatedSlots || updatedSlots.length === 0) {
+        throw new Error("Slot is no longer available");
+      }
 
-    const { error: appointmentInsertError } = await supabase
-      .from("appointments")
-      .insert({
-        slot_id: params.slotId,
-        practitioner_id: params.practitionerId,
-        patient_id: resolvedPatientId,
-        family_member_id: params.familyMemberId ?? null,
-        mode: params.mode,
-        status: "scheduled",
-        reason_for_visit: params.reason,
-        scheduled_date: params.date,
-        scheduled_time: formattedTime,
-      });
+      // Now insert the appointment. If this fails, we must revert the slot status.
+      const { error: appointmentInsertError } = await supabase
+        .from("appointments")
+        .insert({
+          slot_id: params.slotId,
+          practitioner_id: params.practitionerId,
+          patient_id: resolvedPatientId,
+          family_member_id: params.familyMemberId ?? null,
+          mode: params.mode,
+          status: "scheduled",
+          reason_for_visit: params.reason,
+          scheduled_date: params.date,
+          scheduled_time: formattedTime,
+        });
 
-    if (appointmentInsertError) {
-      console.error(
-        "bookAppointment insert error:",
-        appointmentInsertError,
-      );
+      if (appointmentInsertError) {
+        console.error(
+          "bookAppointment insert error:",
+          appointmentInsertError,
+        );
+        // Rollback the slot status to 'open'
+        await supabase
+          .from("slots")
+          .update({ status: "open" })
+          .eq("id", params.slotId);
 
-      throw new Error(appointmentInsertError.message);
-    }
-
-    const { error: slotUpdateError } = await supabase
-      .from("slots")
-      .update({ status: "booked" })
-      .eq("id", params.slotId);
-
-    if (slotUpdateError) {
-      console.error("bookAppointment slot error:", slotUpdateError);
-      throw new Error(slotUpdateError.message);
+        throw new Error(appointmentInsertError.message);
+      }
+    } finally {
+      release();
     }
   }
+
 
   static async submitRating(
     params: SubmitRatingInput,

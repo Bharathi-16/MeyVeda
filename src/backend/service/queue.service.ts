@@ -11,10 +11,16 @@ async function resolveMyPractitionerId(authUser: AuthUser): Promise<string | nul
 }
 
 export class QueueService {
-  static async getTodayQueue(authUser: AuthUser): Promise<any[]> {
+  static async getTodayQueue(authUser: AuthUser, dateStr?: string): Promise<any[]> {
     const practitionerId = await resolveMyPractitionerId(authUser);
     if (!practitionerId) return [];
-    return QueueRepository.getTodayQueue(practitionerId);
+    return QueueRepository.getTodayQueue(practitionerId, dateStr);
+  }
+
+  static async getMonthCounts(authUser: AuthUser, year: number, month: number): Promise<Record<string, number>> {
+    const practitionerId = await resolveMyPractitionerId(authUser);
+    if (!practitionerId) return {};
+    return QueueRepository.getMonthCounts(practitionerId, year, month);
   }
 
   static async getUpcomingAppointments(authUser: AuthUser): Promise<any[]> {

@@ -43,12 +43,10 @@ const PATIENT_NAV: NavItem[] = [
   { href: "/", icon: Home, label: "Home", exact: true },
   { href: "/appointments", icon: Calendar, label: "Appointments" },
   { href: "/discover", icon: Search, label: "Discover" },
-  { href: "/ai-chat", icon: Sparkles, label: "AyurSanvaad AI" },
   // { href: "/dinacharya", icon: Sun, label: "Dinacharya" },
   { href: "/records", icon: Folder, label: "Health Records" },
   { href: "/apothecary", icon: Activity, label: "Apothecary" },
   { href: "/messages", icon: MessageSquare, label: "Messages" },
-  { href: "/notifications", icon: Bell, label: "Notifications", badge: "3" },
   { href: "/profile", icon: User, label: "Profile" },
   "separator",
   // { href: "/pro", icon: Crown, label: "MeyVeda Pro", badge: "Pro", exact: true },
@@ -65,11 +63,6 @@ const PRACTITIONER_NAV: NavItem[] = [
     href: "/pro/patients",
     icon: Search,
     label: "Patient Search",
-  },
-  {
-    href: "/ai-chat",
-    icon: Sparkles,
-    label: "Vaidya Sahayak AI",
   },
   {
     href: "/pro/inbox",
@@ -92,11 +85,6 @@ const PRACTITIONER_NAV: NavItem[] = [
     href: "/pro/availability",
     icon: CalendarDays,
     label: "Availability",
-  },
-  {
-    href: "/notifications",
-    icon: Bell,
-    label: "Notifications",
   },
   {
     href: "/profile",

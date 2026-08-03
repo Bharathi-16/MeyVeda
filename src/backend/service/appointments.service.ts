@@ -1,8 +1,21 @@
 import "server-only";
 
+import { randomUUID } from "crypto";
 import { z } from "zod";
-import { AppointmentsRepository, type AppointmentDbRow } from "../repo/appointments.repo";
-import { AuthUser } from "@/shared/auth/auth.types";
+
+import {
+  AppointmentsRepository,
+  type AppointmentDbRow,
+  type AppointmentVideoRow,
+  type AppointmentVideoStatus,
+} from "../repo/appointments.repo";
+
+import type { AuthUser } from "@/shared/auth/auth.types";
+import { AppError } from "@/shared/api/api-error";
+
+/* -------------------------------------------------------------------------- */
+/*                                   Types                                    */
+/* -------------------------------------------------------------------------- */
 
 export type AppointmentStatus =
   | "scheduled"
@@ -35,181 +48,703 @@ export type AppointmentRow = {
   reminder: boolean;
 };
 
+export type JitsiVideoSession = {
+  appointmentId: string;
+  provider: "jitsi";
+  domain: string;
+  roomName: string;
+  displayName: string;
+  participantRole: string;
+  scheduledDate: string;
+  scheduledTime: string;
+  videoStatus: AppointmentVideoStatus;
+};
+
+/* -------------------------------------------------------------------------- */
+/*                              Validation schemas                            */
+/* -------------------------------------------------------------------------- */
+
 export const createAppointmentSchema = z.object({
-  slotId: z.string().uuid("Invalid Slot ID format"),
-  reasonForVisit: z.string().max(1000, "Reason description is too long").optional(),
+  slotId: z.string().uuid("Invalid slot ID format"),
+
+  reasonForVisit: z
+    .string()
+    .trim()
+    .max(1000, "Reason description is too long")
+    .optional(),
+
   mode: z.enum(["video", "clinic"]),
 });
 
 export const cancelAppointmentSchema = z.object({
-  appointmentId: z.string().uuid("Invalid Appointment ID format"),
-  reason: z.string().min(5, "Cancellation reason must be at least 5 characters long").max(500, "Reason is too long"),
+  appointmentId: z
+    .string()
+    .uuid("Invalid appointment ID format"),
+
+  reason: z
+    .string()
+    .trim()
+    .min(
+      5,
+      "Cancellation reason must be at least 5 characters long",
+    )
+    .max(500, "Cancellation reason is too long"),
 });
 
+/**
+ * Preserved for any existing /appointments/[id] route.
+ */
 export const appointmentIdParamSchema = z.object({
-  id: z.string().uuid("Invalid Appointment Route ID format"),
+  id: z.string().uuid("Invalid appointment route ID format"),
 });
 
-export type CreateAppointmentInput = z.infer<typeof createAppointmentSchema>;
-export type CancelAppointmentInput = z.infer<typeof cancelAppointmentSchema>;
+/**
+ * Used by /appointments/[appointmentId]/video.
+ */
+export const videoAppointmentIdParamSchema = z.object({
+  appointmentId: z
+    .string()
+    .uuid("Invalid video appointment ID format"),
+});
 
-function fmtTime(timeStr?: string | null): string {
-  if (!timeStr) return "00:00 AM";
-  const parts = timeStr.split(":");
-  const hours = parseInt(parts[0], 10);
-  const m = parts[1] ?? "00";
-  const period = hours >= 12 ? "PM" : "AM";
-  const h12 = hours % 12 || 12;
-  return `${h12.toString().padStart(2, "0")}:${m} ${period}`;
+export const updateVideoStatusSchema = z.object({
+  status: z.enum([
+    "waiting",
+    "in_progress",
+    "ended",
+    "cancelled",
+  ]),
+});
+
+export type CreateAppointmentInput = z.infer<
+  typeof createAppointmentSchema
+>;
+
+export type CancelAppointmentInput = z.infer<
+  typeof cancelAppointmentSchema
+>;
+
+export type UpdateVideoStatusInput = z.infer<
+  typeof updateVideoStatusSchema
+>;
+
+/* -------------------------------------------------------------------------- */
+/*                              Helper functions                              */
+/* -------------------------------------------------------------------------- */
+
+function getRole(authUser: AuthUser): string {
+  return String(authUser.role);
 }
 
+function isPatientRole(authUser: AuthUser): boolean {
+  return getRole(authUser) === "patient";
+}
+
+function isPractitionerRole(authUser: AuthUser): boolean {
+  const role = getRole(authUser);
+
+  return role === "doctor" || role === "practitioner";
+}
+
+function isAdminRole(authUser: AuthUser): boolean {
+  const role = getRole(authUser);
+
+  return role === "admin" || role === "super_admin";
+}
+
+function getAuthUserDisplayName(authUser: AuthUser): string {
+  const userWithProfileFields = authUser as AuthUser & {
+    name?: string;
+    fullName?: string;
+    full_name?: string;
+  };
+
+  const resolvedName =
+    userWithProfileFields.name?.trim() ||
+    userWithProfileFields.fullName?.trim() ||
+    userWithProfileFields.full_name?.trim();
+
+  if (resolvedName) {
+    return resolvedName;
+  }
+
+  if (isPatientRole(authUser)) {
+    return "Patient";
+  }
+
+  if (isPractitionerRole(authUser)) {
+    return "Practitioner";
+  }
+
+  return "MeyVeda User";
+}
+
+function normalizeJitsiDomain(domain?: string): string {
+  const value = domain?.trim() || "meet.jit.si";
+
+  return value
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/+$/, "");
+}
+
+function getFirst<T>(
+  value: T | T[] | null | undefined,
+): T | undefined {
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+
+  return value ?? undefined;
+}
+
+function formatTime(timeStr?: string | null): string {
+  if (!timeStr) {
+    return "12:00 AM";
+  }
+
+  const [hourPart = "0", minutePart = "00"] =
+    timeStr.split(":");
+
+  const hour = Number.parseInt(hourPart, 10);
+
+  if (Number.isNaN(hour)) {
+    return timeStr;
+  }
+
+  const period = hour >= 12 ? "PM" : "AM";
+  const hour12 = hour % 12 || 12;
+
+  return `${hour12
+    .toString()
+    .padStart(2, "0")}:${minutePart} ${period}`;
+}
+
+/* -------------------------------------------------------------------------- */
+/*                               Service class                                */
+/* -------------------------------------------------------------------------- */
+
 export class AppointmentsService {
-  static async getAppointmentsForUser(authUser: AuthUser): Promise<AppointmentRow[]> {
+  /**
+   * Return appointments according to the authenticated user's role.
+   */
+  static async getAppointmentsForUser(
+    authUser: AuthUser,
+  ): Promise<AppointmentRow[]> {
     let rawData: AppointmentDbRow[] = [];
 
-    if (authUser.role === "patient") {
-      const patientId = await AppointmentsRepository.getPatientIdFromUserId(authUser.id);
-      if (!patientId) return [];
-      rawData = await AppointmentsRepository.getAppointmentsForPatient(patientId);
-    } else if (authUser.role === "doctor" || (authUser.role as string) === "practitioner") {
-      const doctorProfileId = await AppointmentsRepository.getDoctorIdFromUserId(authUser.id);
-      if (!doctorProfileId) return [];
-      rawData = await AppointmentsRepository.getAppointmentsForDoctor(doctorProfileId);
-    } else if (authUser.role === "admin" || authUser.role === "super_admin") {
-      rawData = await AppointmentsRepository.getAllAppointments();
+    if (isPatientRole(authUser)) {
+      const patientId =
+        await AppointmentsRepository.getPatientIdFromUserId(
+          authUser.id,
+        );
+
+      if (!patientId) {
+        return [];
+      }
+
+      rawData =
+        await AppointmentsRepository.getAppointmentsForPatient(
+          patientId,
+        );
+    } else if (isPractitionerRole(authUser)) {
+      const practitionerId =
+        await AppointmentsRepository.getPractitionerIdFromUserId(
+          authUser.id,
+        );
+
+      if (!practitionerId) {
+        return [];
+      }
+
+      rawData =
+        await AppointmentsRepository.getAppointmentsForDoctor(
+          practitionerId,
+        );
+    } else if (isAdminRole(authUser)) {
+      rawData =
+        await AppointmentsRepository.getAllAppointments();
     } else {
-      return []; // Other roles see nothing by default
+      return [];
     }
 
     return this.mapDbRowsToUI(rawData);
   }
 
-  static async cancelAppointment(
-    authUser: AuthUser,
-    appointmentId: string,
-    reason: string
-  ): Promise<void> {
-    // 1. Fetch appointment details
-    const appointment = await AppointmentsRepository.getAppointmentById(appointmentId);
-    if (!appointment) {
-      throw new Error("Appointment not found");
-    }
-
-    // 2. Validate Ownership
-    let authorized = false;
-
-    if (authUser.role === "admin" || authUser.role === "super_admin") {
-      authorized = true;
-    } else if (authUser.role === "patient") {
-      const patientId = await AppointmentsRepository.getPatientIdFromUserId(authUser.id);
-      if (patientId && appointment.patient_id === patientId) {
-        authorized = true;
-      }
-    } else if (authUser.role === "doctor" || (authUser.role as string) === "practitioner") {
-      const doctorProfileId = await AppointmentsRepository.getDoctorIdFromUserId(authUser.id);
-      if (doctorProfileId && appointment.doctor_profile_id === doctorProfileId) {
-        authorized = true;
-      }
-    }
-
-    if (!authorized) {
-      throw new Error("You are not authorized to cancel this appointment");
-    }
-
-    if (appointment.status === "cancelled") {
-      throw new Error("Appointment is already cancelled");
-    }
-
-    // 3. Execute database change
-    await AppointmentsRepository.cancelAppointment(appointmentId, reason);
-  }
-
+  /**
+   * Create an appointment for the authenticated patient.
+   *
+   * This endpoint does not accept a target patient ID, so only patients can
+   * use it safely. Admin booking should use a separate endpoint that accepts
+   * and validates a patient ID.
+   */
   static async createAppointment(
     authUser: AuthUser,
     slotId: string,
-    mode: string,
-    reasonForVisit?: string
+    mode: AppointmentMode,
+    reasonForVisit?: string,
   ): Promise<{ id: string }> {
-    let patientId: string | null = null;
-
-    if (authUser.role === "patient") {
-      patientId = await AppointmentsRepository.getPatientIdFromUserId(authUser.id);
-    } else if (authUser.role === "admin" || authUser.role === "super_admin") {
-      // Admin could schedule for a specific patient, but for this simple route
-      // we assume they fall back to mapping themselves or a stub patient.
-      // In production, admin booking accepts a direct patient_id target.
-      patientId = await AppointmentsRepository.getPatientIdFromUserId(authUser.id);
+    if (!isPatientRole(authUser)) {
+      throw new AppError(
+        "Only a registered patient can book an appointment through this endpoint",
+        403,
+      );
     }
+
+    const patientId =
+      await AppointmentsRepository.getPatientIdFromUserId(
+        authUser.id,
+      );
 
     if (!patientId) {
-      throw new Error("A valid registered patient profile is required to schedule an appointment");
+      throw new AppError(
+        "A valid patient profile is required to schedule an appointment",
+        400,
+      );
     }
 
-    const newAppt = await AppointmentsRepository.createAppointment(
-      patientId,
-      slotId,
-      mode,
-      reasonForVisit
-    );
+    const appointment =
+      await AppointmentsRepository.createAppointment(
+        patientId,
+        slotId,
+        mode,
+        reasonForVisit,
+      );
 
-    return { id: newAppt.id };
+    return {
+      id: appointment.id,
+    };
   }
 
-  private static mapDbRowsToUI(rawData: AppointmentDbRow[]): AppointmentRow[] {
-    return rawData.map((row: AppointmentDbRow) => {
-      const pracArr = Array.isArray(row.practitioner) ? row.practitioner : row.practitioner ? [row.practitioner] : [];
-      const prac = pracArr[0] ?? {};
-      const name = prac.full_name ?? "Unknown Doctor";
-      const initials = name
-        .split(" ")
-        .filter((w: string) => w)
-        .map((w: string) => w[0])
+  /**
+   * Cancel an appointment after validating ownership.
+   */
+  static async cancelAppointment(
+    authUser: AuthUser,
+    appointmentId: string,
+    reason: string,
+  ): Promise<void> {
+    const appointment =
+      await AppointmentsRepository.getAppointmentById(
+        appointmentId,
+      );
+
+    if (!appointment) {
+      throw new AppError("Appointment not found", 404);
+    }
+
+    if (appointment.status === "cancelled") {
+      throw new AppError(
+        "Appointment is already cancelled",
+        409,
+      );
+    }
+
+    if (appointment.status === "completed") {
+      throw new AppError(
+        "A completed appointment cannot be cancelled",
+        409,
+      );
+    }
+
+    if (appointment.status === "no_show") {
+      throw new AppError(
+        "A no-show appointment cannot be cancelled",
+        409,
+      );
+    }
+
+    let authorized = false;
+
+    if (isAdminRole(authUser)) {
+      authorized = true;
+    } else if (isPatientRole(authUser)) {
+      const patientId =
+        await AppointmentsRepository.getPatientIdFromUserId(
+          authUser.id,
+        );
+
+      authorized =
+        Boolean(patientId) &&
+        appointment.patient_id === patientId;
+    } else if (isPractitionerRole(authUser)) {
+      const practitionerId =
+        await AppointmentsRepository.getPractitionerIdFromUserId(
+          authUser.id,
+        );
+
+      authorized =
+        Boolean(practitionerId) &&
+        appointment.practitioner_id === practitionerId;
+    }
+
+    if (!authorized) {
+      throw new AppError(
+        "You are not authorized to cancel this appointment",
+        403,
+      );
+    }
+
+    await AppointmentsRepository.cancelAppointment(
+      appointmentId,
+      reason.trim(),
+    );
+  }
+
+  /* ------------------------------------------------------------------------ */
+  /*                         Jitsi video-call services                         */
+  /* ------------------------------------------------------------------------ */
+
+  /**
+   * Fetch an appointment and verify that the logged-in user is allowed to
+   * access its video consultation.
+   */
+  private static async assertVideoAppointmentAccess(
+    appointmentId: string,
+    authUser: AuthUser,
+  ): Promise<AppointmentVideoRow> {
+    const appointment =
+      await AppointmentsRepository.getVideoAppointmentById(
+        appointmentId,
+      );
+
+    if (appointment.status === "cancelled") {
+      throw new AppError(
+        "This appointment has been cancelled",
+        409,
+      );
+    }
+
+    if (appointment.status === "no_show") {
+      throw new AppError(
+        "This appointment has been marked as no-show",
+        409,
+      );
+    }
+
+    if (appointment.mode !== "video") {
+      throw new AppError(
+        "This appointment is not a video consultation",
+        400,
+      );
+    }
+
+    if (isAdminRole(authUser)) {
+      return appointment;
+    }
+
+    if (isPatientRole(authUser)) {
+      const patientId =
+        await AppointmentsRepository.getPatientIdFromUserId(
+          authUser.id,
+        );
+
+      if (
+        !patientId ||
+        appointment.patient_id !== patientId
+      ) {
+        throw new AppError(
+          "You are not authorized to access this video consultation",
+          403,
+        );
+      }
+
+      return appointment;
+    }
+
+    if (isPractitionerRole(authUser)) {
+      const practitionerId =
+        await AppointmentsRepository.getPractitionerIdFromUserId(
+          authUser.id,
+        );
+
+      if (
+        !practitionerId ||
+        appointment.practitioner_id !== practitionerId
+      ) {
+        throw new AppError(
+          "You are not authorized to access this video consultation",
+          403,
+        );
+      }
+
+      return appointment;
+    }
+
+    throw new AppError(
+      "Your role cannot access video consultations",
+      403,
+    );
+  }
+
+  /**
+   * Get an existing Jitsi room or securely generate one.
+   */
+  static async getOrCreateJitsiSession(
+    appointmentId: string,
+    authUser: AuthUser,
+  ): Promise<JitsiVideoSession> {
+    let appointment =
+      await this.assertVideoAppointmentAccess(
+        appointmentId,
+        authUser,
+      );
+
+    if (appointment.video_status === "cancelled") {
+      throw new AppError(
+        "This video consultation has been cancelled",
+        409,
+      );
+    }
+
+    if (appointment.video_status === "ended") {
+      throw new AppError(
+        "This video consultation has already ended",
+        409,
+      );
+    }
+
+    if (!appointment.video_room_name) {
+      const generatedRoomName = [
+        "meyveda",
+        appointment.id.replaceAll("-", ""),
+        randomUUID().replaceAll("-", ""),
+      ].join("-");
+
+      appointment =
+        await AppointmentsRepository.createJitsiRoomIfMissing(
+          appointment.id,
+          generatedRoomName,
+        );
+    } else if (
+      appointment.video_status === "not_started"
+    ) {
+      appointment =
+        await AppointmentsRepository.markVideoWaiting(
+          appointment.id,
+        );
+    }
+
+    if (!appointment.video_room_name) {
+      throw new AppError(
+        "Unable to prepare the video consultation room",
+        500,
+      );
+    }
+
+    return {
+      appointmentId: appointment.id,
+      provider: "jitsi",
+      domain: normalizeJitsiDomain(
+        process.env.JITSI_DOMAIN,
+      ),
+      roomName: appointment.video_room_name,
+      displayName: getAuthUserDisplayName(authUser),
+      participantRole: getRole(authUser),
+      scheduledDate: appointment.scheduled_date,
+      scheduledTime: appointment.scheduled_time,
+      videoStatus: appointment.video_status,
+    };
+  }
+
+  /**
+   * Update the appointment's Jitsi status.
+   *
+   * Patients can enter the waiting room. Only practitioners and admins can
+   * officially start, end, or cancel the consultation.
+   */
+  static async updateJitsiSessionStatus(
+    appointmentId: string,
+    videoStatus: AppointmentVideoStatus,
+    authUser: AuthUser,
+  ): Promise<{
+    success: true;
+    appointmentId: string;
+    videoStatus: AppointmentVideoStatus;
+    sessionStartedAt: string | null;
+    sessionEndedAt: string | null;
+    durationMin: number | null;
+  }> {
+    const appointment =
+      await this.assertVideoAppointmentAccess(
+        appointmentId,
+        authUser,
+      );
+
+    const canManageConsultation =
+      isPractitionerRole(authUser) ||
+      isAdminRole(authUser);
+
+    if (
+      videoStatus !== "waiting" &&
+      !canManageConsultation
+    ) {
+      throw new AppError(
+        "Only the practitioner can start, end, or cancel this video consultation",
+        403,
+      );
+    }
+
+    this.assertVideoStatusTransition(
+      appointment.video_status,
+      videoStatus,
+    );
+
+    const updatedAppointment =
+      await AppointmentsRepository.updateVideoStatus(
+        appointmentId,
+        videoStatus,
+      );
+
+    return {
+      success: true,
+      appointmentId: updatedAppointment.id,
+      videoStatus: updatedAppointment.video_status,
+      sessionStartedAt:
+        updatedAppointment.session_started_at,
+      sessionEndedAt:
+        updatedAppointment.session_ended_at,
+      durationMin: updatedAppointment.duration_min,
+    };
+  }
+
+  /**
+   * Prevent invalid status changes such as reopening a completed call.
+   */
+  private static assertVideoStatusTransition(
+    currentStatus: AppointmentVideoStatus,
+    nextStatus: AppointmentVideoStatus,
+  ): void {
+    if (currentStatus === nextStatus) {
+      return;
+    }
+
+    const allowedTransitions: Record<
+      AppointmentVideoStatus,
+      AppointmentVideoStatus[]
+    > = {
+      not_started: ["waiting", "cancelled"],
+      waiting: ["in_progress", "cancelled"],
+      in_progress: ["ended", "cancelled"],
+      ended: [],
+      cancelled: [],
+    };
+
+    if (
+      !allowedTransitions[currentStatus].includes(
+        nextStatus,
+      )
+    ) {
+      throw new AppError(
+        `Video status cannot change from ${currentStatus} to ${nextStatus}`,
+        409,
+      );
+    }
+  }
+
+  /* ------------------------------------------------------------------------ */
+  /*                            UI mapping function                            */
+  /* ------------------------------------------------------------------------ */
+
+  private static mapDbRowsToUI(
+    rawData: AppointmentDbRow[],
+  ): AppointmentRow[] {
+    return rawData.map((row) => {
+      const practitioner = getFirst(row.practitioner);
+
+      const doctorName =
+        practitioner?.full_name?.trim() ||
+        "Unknown Doctor";
+
+      const initials = doctorName
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((word) => word.charAt(0))
         .join("")
         .slice(0, 2)
         .toUpperCase();
 
-      const specs = [...(prac.specializations ?? []), ...(prac.disciplines ?? [])];
+      const specialties = [
+        ...(practitioner?.specializations ?? []),
+        ...(practitioner?.disciplines ?? []),
+      ];
 
-      const slotArr = Array.isArray(row.slot) ? row.slot : row.slot ? [row.slot] : [];
-      const slot = slotArr[0];
-      const fee = slot?.fee ? `₹${Math.round(slot.fee / 100)}` : "—";
+      const slot = getFirst(row.slot);
 
-      const dateObj = new Date(row.scheduled_date + "T" + (row.scheduled_time ?? "00:00"));
-      const isToday = row.scheduled_date === new Date().toISOString().split("T")[0];
-      const dateStr = isToday
-        ? `Today, ${fmtTime(row.scheduled_time)}`
-        : dateObj.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) +
-          " · " +
-          fmtTime(row.scheduled_time);
+      const fee =
+        slot?.fee !== null &&
+        slot?.fee !== undefined
+          ? `₹${Math.round(slot.fee / 100)}`
+          : "—";
 
-      let status: "upcoming" | "past" | "cancelled" = "upcoming";
-      if (row.status === "completed") status = "past";
-      else if (row.status === "cancelled" || row.status === "no_show") status = "cancelled";
-      else if (["scheduled", "checked_in", "in_session", "rescheduled"].includes(row.status)) {
-        status = "upcoming";
+      const appointmentDate = new Date(
+        `${row.scheduled_date}T${
+          row.scheduled_time || "00:00:00"
+        }`,
+      );
+
+      const currentDate = new Date()
+        .toLocaleDateString("en-CA");
+
+      const isToday =
+        row.scheduled_date === currentDate;
+
+      const dateText = isToday
+        ? `Today, ${formatTime(row.scheduled_time)}`
+        : `${appointmentDate.toLocaleDateString(
+            "en-IN",
+            {
+              day: "numeric",
+              month: "short",
+              year: "numeric",
+            },
+          )} · ${formatTime(row.scheduled_time)}`;
+
+      let uiStatus:
+        | "upcoming"
+        | "past"
+        | "cancelled" = "upcoming";
+
+      if (row.status === "completed") {
+        uiStatus = "past";
+      } else if (
+        row.status === "cancelled" ||
+        row.status === "no_show"
+      ) {
+        uiStatus = "cancelled";
       }
 
-      const consultArr = Array.isArray(row.consultation) ? row.consultation : row.consultation ? [row.consultation] : [];
-      const consult = consultArr[0];
-      const ratingObj = consult?.rating;
-      const ratingArr = Array.isArray(ratingObj) ? ratingObj : ratingObj ? [ratingObj] : [];
+      const consultation = getFirst(
+        row.consultation,
+      );
+
+      const rating = getFirst(
+        consultation?.rating,
+      );
+
+      const mode: AppointmentMode =
+        row.mode === "clinic" ? "clinic" : "video";
 
       return {
         id: row.id,
-        doctor: name,
-        practitionerId: prac.id ?? "",
-        consultationId: consult?.id,
+        doctor: doctorName,
+        practitionerId: practitioner?.id ?? "",
+        consultationId: consultation?.id,
         initials,
-        specialty: specs.join(" · ") || "AYUSH",
-        date: dateStr,
+        specialty:
+          specialties.join(" · ") || "AYUSH",
+        date: dateText,
         dateRaw: row.scheduled_date,
-        mode: (row.mode as "video" | "clinic") || "video",
-        status,
+        mode,
+        status: uiStatus,
         fee,
-        duration: row.duration_min ? `${row.duration_min} min` : undefined,
-        rating: ratingArr[0]?.stars ?? undefined,
-        hasPrescription: consultArr.length > 0,
-        reason: row.cancellation_reason ?? undefined,
+        duration: row.duration_min
+          ? `${row.duration_min} min`
+          : undefined,
+        rating: rating?.stars ?? undefined,
+        hasPrescription:
+          Boolean(consultation?.id),
+        reason:
+          row.cancellation_reason ?? undefined,
         refunded: row.status === "cancelled",
         reminder: false,
       };
