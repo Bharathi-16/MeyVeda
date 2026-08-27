@@ -1,14 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { useHealthRecords } from "@/hooks/use-emr";
 import { usePatientProfile } from "@/hooks/use-profile";
 import { fetchDetailedConsultations } from "@/hooks/use-consultations";
+import { useFamilyMembers } from "@/hooks/use-family";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import type { HealthRecord } from "@/lib/types";
-import { Search, ArrowRight, User, Activity, FileText, Pill, Stethoscope, FileUp, Clock, ArrowLeft, Download, Calendar, X, Check, ChevronDown } from "lucide-react";
+import { Search, ArrowRight, User, Users, Activity, FileText, Pill, Stethoscope, FileUp, Clock, ArrowLeft, Download, Calendar, X, Check, ChevronDown } from "lucide-react";
 import Link from "next/link";
+import { InvoiceDialog } from "@/components/consultation-report/InvoiceDialog";
 
 type FilterTab = "All" | "Pariksha" | "Aushadhi" | "Lab" | "Trackers";
 
@@ -31,7 +34,16 @@ const getPatientInitials = (name: string) => {
 };
 
 export default function RecordsPage() {
+  return (
+    <Suspense fallback={null}>
+      <RecordsPageContent />
+    </Suspense>
+  );
+}
+
+function RecordsPageContent() {
   const { user } = useAuth();
+  const searchParams = useSearchParams();
 
   const [activeTab, setActiveTab] = useState<FilterTab>("All");
   const [searchQuery, setSearchQuery] = useState("");
@@ -44,16 +56,21 @@ export default function RecordsPage() {
   const [customDate, setCustomDate] = useState<string | null>(null);
   const [openDateDropdown, setOpenDateDropdown] = useState(false);
 
+  const [selectedFamilyMemberId, setSelectedFamilyMemberId] = useState<string | null>(
+    () => searchParams.get("familyMemberId"),
+  );
+  const [openMemberDropdown, setOpenMemberDropdown] = useState(false);
+
   const isWithinDateFilter = useCallback((recordDateStr: string) => {
     if (dateFilterType === "all") return true;
-    
+
     const recordDate = new Date(recordDateStr);
     if (isNaN(recordDate.getTime())) return true;
-    
+
     const now = new Date();
     const recordStart = new Date(recordDate.getFullYear(), recordDate.getMonth(), recordDate.getDate()).getTime();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    
+
     switch (dateFilterType) {
       case "today":
         return recordStart === todayStart;
@@ -85,21 +102,31 @@ export default function RecordsPage() {
 
   const { data: records } = useHealthRecords(user?.id);
   const { data: profile } = usePatientProfile(user?.id);
+  const { data: familyMembers } = useFamilyMembers(user?.id);
 
   const patientName = profile?.name || user?.name || "Patient";
   const patientInitials = getPatientInitials(patientName);
+
+  const selectedFamilyMember = (familyMembers || []).find(m => m.id === selectedFamilyMemberId) || null;
+  const viewingRecordsForName = selectedFamilyMember ? selectedFamilyMember.name : "Myself";
 
   const [detailedRecords, setDetailedRecords] = useState<any[]>([]);
 
   const fetchDetailedRecords = useCallback(async () => {
     if (!user?.id) return;
-    const data = await fetchDetailedConsultations();
+    const data = await fetchDetailedConsultations(selectedFamilyMemberId);
     setDetailedRecords(data || []);
-  }, [user?.id]);
+  }, [user?.id, selectedFamilyMemberId]);
 
   useEffect(() => {
     fetchDetailedRecords();
   }, [fetchDetailedRecords]);
+
+  useEffect(() => {
+    setSelectedConsultationId(null);
+    setSelectedDoctorName(null);
+    setIsExpanded(false);
+  }, [selectedFamilyMemberId]);
 
   // Combine detailed records into a format the UI expects
   const mappedDetailedRecords = detailedRecords.map(r => {
@@ -107,12 +134,12 @@ export default function RecordsPage() {
     let rawAssessment: any = {};
     let rawFindings: any = {};
     let parsedChiefComplaints: any[] = [];
-    
+
     try {
       if (emr?.assessment) rawAssessment = JSON.parse(emr.assessment);
       if (emr?.objective_findings) rawFindings = JSON.parse(emr.objective_findings);
       if (emr?.chief_complaint) parsedChiefComplaints = JSON.parse(emr.chief_complaint);
-    } catch(e) {}
+    } catch (e) { }
 
     const pres = r.prescriptions?.[0];
     const meds = pres?.prescription_items?.map((item: any) => ({
@@ -156,8 +183,10 @@ export default function RecordsPage() {
   });
 
   const allRecordIds = new Set(mappedDetailedRecords.map(r => r.id));
-  const otherRecords = (records || []).filter(r => !allRecordIds.has(r.id));
-  
+  // health_records has no family-member linkage in the schema, so it can only
+  // be safely attributed to the signed-in patient — hide it when viewing a family member.
+  const otherRecords = selectedFamilyMemberId ? [] : (records || []).filter(r => !allRecordIds.has(r.id));
+
   const allRecords = [...mappedDetailedRecords, ...otherRecords];
 
   const filtered = allRecords.filter((r) => {
@@ -168,9 +197,9 @@ export default function RecordsPage() {
     // Search filter
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      if (!r.title.toLowerCase().includes(q) && 
-          !(r.doctor || "").toLowerCase().includes(q) &&
-          !(r.summary || "").toLowerCase().includes(q)) {
+      if (!r.title.toLowerCase().includes(q) &&
+        !(r.doctor || "").toLowerCase().includes(q) &&
+        !(r.summary || "").toLowerCase().includes(q)) {
         return false;
       }
     }
@@ -246,6 +275,68 @@ export default function RecordsPage() {
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full bg-white border border-slate-200 rounded-full pl-10 pr-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-sm placeholder:text-slate-400 font-medium"
                 />
+              </div>
+
+              {/* Family Member Dropdown */}
+              <div className="relative w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => setOpenMemberDropdown(!openMemberDropdown)}
+                  className={cn(
+                    "h-[42px] px-5 rounded-full border text-xs font-bold flex items-center justify-between sm:justify-start gap-2.5 transition-all cursor-pointer shadow-sm select-none w-full sm:w-auto",
+                    selectedFamilyMemberId
+                      ? "bg-indigo-50 border-indigo-200 text-indigo-700 ring-1 ring-indigo-200/30"
+                      : "bg-white hover:bg-slate-50 border-slate-200 text-slate-600"
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <Users className={cn("h-4 w-4", selectedFamilyMemberId ? "text-indigo-600" : "text-slate-400")} />
+                    <span className="truncate max-w-[120px]">{viewingRecordsForName}</span>
+                  </div>
+                  <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+                </button>
+
+                {openMemberDropdown && (
+                  <>
+                    <div className="fixed inset-0 z-20" onClick={() => setOpenMemberDropdown(false)} />
+                    <div className="absolute right-0 top-[calc(100%+8px)] z-35 bg-white border border-slate-200/80 rounded-2xl shadow-xl min-w-[220px] p-1.5 animate-in fade-in slide-in-from-top-1 duration-150">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedFamilyMemberId(null);
+                          setOpenMemberDropdown(false);
+                        }}
+                        className="w-full text-left px-3.5 py-2 text-xs font-semibold hover:bg-slate-50 rounded-xl transition-colors flex items-center justify-between text-slate-700"
+                      >
+                        <span className={!selectedFamilyMemberId ? "text-indigo-600 font-bold" : ""}>Myself</span>
+                        {!selectedFamilyMemberId && <Check className="h-3.5 w-3.5 text-indigo-600" />}
+                      </button>
+
+                      {(familyMembers || []).length > 0 && <div className="border-t border-slate-100 my-1.5" />}
+
+                      {(familyMembers || []).map((member) => (
+                        <button
+                          type="button"
+                          key={member.id}
+                          onClick={() => {
+                            setSelectedFamilyMemberId(member.id);
+                            setOpenMemberDropdown(false);
+                          }}
+                          className="w-full text-left px-3.5 py-2 text-xs font-semibold hover:bg-slate-50 rounded-xl transition-colors flex items-center justify-between text-slate-700"
+                        >
+                          <span className={cn("truncate", selectedFamilyMemberId === member.id ? "text-indigo-600 font-bold" : "")}>
+                            {member.name} <span className="text-slate-400 font-medium">({member.relationship})</span>
+                          </span>
+                          {selectedFamilyMemberId === member.id && <Check className="h-3.5 w-3.5 text-indigo-600 flex-shrink-0 ml-2" />}
+                        </button>
+                      ))}
+
+                      {(familyMembers || []).length === 0 && (
+                        <div className="px-3.5 py-2 text-[11px] text-slate-400 font-medium">No family members added yet.</div>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Date Filter Dropdown */}
@@ -348,14 +439,14 @@ export default function RecordsPage() {
             <h2 className="text-xl font-bold text-slate-900 tracking-tight">Doctor Directory</h2>
             <p className="text-xs text-slate-500 mt-1">Select a doctor to view consultation histories</p>
           </div>
-          
+
           <div className="flex-1 overflow-y-auto divide-y divide-slate-100 p-2 space-y-1">
             {uniqueDoctors.map((doc) => {
               const isSelected = selectedDoctorName === doc.name;
               const specs = Array.isArray(doc.specializations) ? doc.specializations.join(", ") : doc.specializations || "Ayurveda Specialist";
               const cleanName = doc.name.replace(/^Dr\.\s*/i, "");
               const docInitials = getPatientInitials(cleanName);
-              
+
               return (
                 <div
                   key={doc.name}
@@ -401,7 +492,7 @@ export default function RecordsPage() {
                 </div>
               );
             })}
-            
+
             {uniqueDoctors.length === 0 && (
               <div className="text-center py-12 px-4">
                 <Stethoscope className="w-8 h-8 text-slate-300 mx-auto mb-3" />
@@ -444,58 +535,58 @@ export default function RecordsPage() {
                   .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
                   .slice(0, isExpanded ? undefined : 5)
                   .map((record: any, idx: number) => {
-                  const dateObj = new Date(record.date);
-                  
-                  return (
-                    <div 
-                      key={record.id} 
-                      className={cn(
-                        "relative pl-10 flex items-start gap-4 group",
-                        !isExpanded || idx < 5 ? "" : "animate-in fade-in slide-in-from-top-4 duration-300"
-                      )}
-                    >
-                      {/* Timeline Dot Icon */}
-                      <div className="absolute left-0.5 top-1.5 w-8 h-8 rounded-full border border-slate-200 bg-white flex items-center justify-center shadow-sm group-hover:border-indigo-400 group-hover:shadow transition-all">
-                        <Calendar className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-600 transition-colors" />
-                      </div>
+                    const dateObj = new Date(record.date);
 
-                      {/* Record Card */}
-                      <div 
-                        onClick={() => setSelectedConsultationId(record.id)}
-                        className="flex-1 bg-white border border-slate-200 hover:border-slate-300 rounded-2xl p-6 shadow-sm hover:shadow-md transition-all cursor-pointer flex items-center justify-between gap-6"
+                    return (
+                      <div
+                        key={record.id}
+                        className={cn(
+                          "relative pl-10 flex items-start gap-4 group",
+                          !isExpanded || idx < 5 ? "" : "animate-in fade-in slide-in-from-top-4 duration-300"
+                        )}
                       >
-                        <div className="space-y-2.5">
-                          <div className="flex items-center gap-3">
-                            <span className="font-semibold text-base text-slate-900">
-                              {dateObj.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
-                            </span>
-                            <span className="text-xs font-semibold px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-md border border-emerald-100 uppercase tracking-wide">
-                              Completed
-                            </span>
-                          </div>
-                          
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-y-1.5 gap-x-6 text-sm text-slate-600 font-medium">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-slate-500">Reason:</span>
-                              <span className="text-slate-800">{record._raw?.visitReason || record._raw?.diagnosis || "Follow Up"}</span>
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-slate-500">Prescribed:</span>
-                              <span className="text-slate-800">{record._raw?.medicines?.length || 0} Formulations</span>
-                            </div>
-                          </div>
+                        {/* Timeline Dot Icon */}
+                        <div className="absolute left-0.5 top-1.5 w-8 h-8 rounded-full border border-slate-200 bg-white flex items-center justify-center shadow-sm group-hover:border-indigo-400 group-hover:shadow transition-all">
+                          <Calendar className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-600 transition-colors" />
                         </div>
 
-                        <div className="flex items-center gap-3">
-                          <button className="flex items-center gap-1.5 py-2.5 px-4 bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-300 text-slate-700 text-sm font-semibold rounded-xl transition-all shadow-sm">
-                            <span>Open Report</span>
-                            <ArrowRight className="w-4 h-4 ml-0.5" />
-                          </button>
+                        {/* Record Card */}
+                        <div
+                          onClick={() => setSelectedConsultationId(record.id)}
+                          className="flex-1 bg-white border border-slate-200 hover:border-slate-300 rounded-2xl p-6 shadow-sm hover:shadow-md transition-all cursor-pointer flex items-center justify-between gap-6"
+                        >
+                          <div className="space-y-2.5">
+                            <div className="flex items-center gap-3">
+                              <span className="font-semibold text-base text-slate-900">
+                                {dateObj.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                              </span>
+                              <span className="text-xs font-semibold px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-md border border-emerald-100 uppercase tracking-wide">
+                                Completed
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-y-1.5 gap-x-6 text-sm text-slate-600 font-medium">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-slate-500">Reason:</span>
+                                <span className="text-slate-800">{record._raw?.visitReason || record._raw?.diagnosis || "Follow Up"}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-slate-500">Prescribed:</span>
+                                <span className="text-slate-800">{record._raw?.medicines?.length || 0} Formulations</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3">
+                            <button className="flex items-center gap-1.5 py-2.5 px-4 bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-300 text-slate-700 text-sm font-semibold rounded-xl transition-all shadow-sm">
+                              <span>Open Report</span>
+                              <ArrowRight className="w-4 h-4 ml-0.5" />
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
 
                 {/* View More / View Less Navigation */}
                 {activeDoctor.list && activeDoctor.list.length > 5 && (
@@ -525,7 +616,7 @@ export default function RecordsPage() {
               {/* Header / Actions */}
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 border-b border-slate-200 pb-6">
                 <div>
-                  <button 
+                  <button
                     onClick={() => setSelectedConsultationId(null)}
                     className="inline-flex items-center text-sm font-semibold text-slate-500 hover:text-indigo-600 transition-colors mb-3"
                   >
@@ -541,10 +632,10 @@ export default function RecordsPage() {
                   </p>
                 </div>
 
-                  <div className="flex items-center gap-3">
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Consultation Report</span>
-                  </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Consultation Report</span>
                 </div>
+              </div>
 
               <div className="space-y-6">
                 {/* Treating Doctor Card */}
@@ -563,12 +654,20 @@ export default function RecordsPage() {
                       </p>
                     </div>
                   </div>
-                  <a href={`/api/consultations/${activeRecord.id}/pdf`} target="_blank" className="relative z-10 flex-shrink-0 w-full sm:w-auto">
-                    <button className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-sm font-semibold rounded-xl shadow-sm transition-all">
-                      <Download className="w-4 h-4" />
-                      Download PDF
-                    </button>
-                  </a>
+                  <div className="relative z-10 flex-shrink-0 w-full sm:w-auto flex items-center gap-2">
+                    <InvoiceDialog
+                      consultationId={activeRecord.id}
+                      patientName={patientName}
+                      doctorName={activeRecord.doctor}
+                      invoiceDate={new Date(activeRecord.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                    />
+                    <a href={`/api/consultations/${activeRecord.id}/pdf`} target="_blank" className="w-full sm:w-auto">
+                      <button className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-sm font-semibold rounded-xl shadow-sm transition-all">
+                        <Download className="w-4 h-4" />
+                        Download PDF
+                      </button>
+                    </a>
+                  </div>
                 </div>
 
                 {/* Patient Profile Summary - Column Layout */}
@@ -650,16 +749,16 @@ export default function RecordsPage() {
                       </div>
                     )}
 
-                    {!activeRecord._raw?.visitReason && 
-                     (!activeRecord._raw?.chiefComplaints || activeRecord._raw.chiefComplaints.length === 0) &&
-                     !activeRecord._raw?.history_present &&
-                     !activeRecord._raw?.previousHistory &&
-                     !activeRecord._raw?.previousCalls &&
-                     !activeRecord._raw?.diagnosis && (
-                       <div className="text-center py-6">
-                         <p className="text-xs text-slate-400 italic">No clinical SOAP notes recorded for this consultation.</p>
-                       </div>
-                     )}
+                    {!activeRecord._raw?.visitReason &&
+                      (!activeRecord._raw?.chiefComplaints || activeRecord._raw.chiefComplaints.length === 0) &&
+                      !activeRecord._raw?.history_present &&
+                      !activeRecord._raw?.previousHistory &&
+                      !activeRecord._raw?.previousCalls &&
+                      !activeRecord._raw?.diagnosis && (
+                        <div className="text-center py-6">
+                          <p className="text-xs text-slate-400 italic">No clinical SOAP notes recorded for this consultation.</p>
+                        </div>
+                      )}
                   </div>
                 </div>
 
@@ -768,10 +867,10 @@ export default function RecordsPage() {
                     Dietary & Lifestyle Advice
                   </h2>
                   {activeRecord._raw?.prescriptionNotes ? (
-                    <div 
+                    <div
                       className="prose prose-sm max-w-none text-slate-700 bg-amber-50/20 p-5 rounded-xl border border-amber-100/50
                         [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:mb-1 [&_p]:mb-3 last:[&_p]:mb-0 font-medium leading-relaxed"
-                      dangerouslySetInnerHTML={{ __html: activeRecord._raw.prescriptionNotes }} 
+                      dangerouslySetInnerHTML={{ __html: activeRecord._raw.prescriptionNotes }}
                     />
                   ) : (
                     <p className="text-sm text-slate-400 italic">No dietary or lifestyle advice recorded.</p>
@@ -792,10 +891,10 @@ export default function RecordsPage() {
                             <FileText className="w-4.5 h-4.5 text-indigo-500 flex-shrink-0" />
                             <span className="text-xs text-slate-700 font-semibold truncate" title={file.file_name}>{file.file_name}</span>
                           </div>
-                          <a 
-                            href={file.file_url} 
-                            target="_blank" 
-                            rel="noopener noreferrer" 
+                          <a
+                            href={file.file_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
                             className="text-xs font-bold text-indigo-600 hover:text-indigo-800 ml-3 flex-shrink-0 transition-colors"
                           >
                             View File
@@ -818,7 +917,7 @@ export default function RecordsPage() {
                       {activeRecord._raw?.followUpInstructions?.replace(/\[Upcoming Session Fixed: .*?\]/g, '').trim() || "No specific follow-up instructions provided."}
                     </p>
                   </div>
-                  
+
                   {activeRecord._raw?.followUpInstructions?.match(/\[Upcoming Session Fixed: (.*?)\]/) && (
                     <div className="bg-[#f0fdf4] border border-[#bbf7d0] rounded-xl p-4 flex items-center justify-between">
                       <div>
@@ -838,12 +937,12 @@ export default function RecordsPage() {
                                   const h12 = hours % 12 || 12;
                                   displayTime = `${h12}:${m} ${period}`;
                                 }
-                              } catch (e) {}
+                              } catch (e) { }
 
                               let displayDate = date;
                               try {
                                 displayDate = new Date(date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-                              } catch (e) {}
+                              } catch (e) { }
 
                               return `${displayDate} at ${displayTime}`;
                             }

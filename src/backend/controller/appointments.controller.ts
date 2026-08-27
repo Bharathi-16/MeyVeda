@@ -14,34 +14,7 @@ import { PERMISSIONS } from "@/shared/security/permissions";
 import { apiSuccess } from "@/shared/api/api-response";
 import { ValidationError } from "@/shared/api/api-error";
 import { writeAuditLog } from "@/shared/security/audit-log";
-
-/* -------------------------------------------------------------------------- */
-/*                              Helper functions                              */
-/* -------------------------------------------------------------------------- */
-
-function getRequestIp(req: NextRequest): string {
-  const forwardedFor = req.headers.get(
-    "x-forwarded-for",
-  );
-
-  if (forwardedFor) {
-    return forwardedFor.split(",")[0]?.trim() || "unknown";
-  }
-
-  return (
-    req.headers.get("x-real-ip") ||
-    req.headers.get("cf-connecting-ip") ||
-    "unknown"
-  );
-}
-
-function getRequestUserAgent(
-  req: NextRequest,
-): string {
-  return (
-    req.headers.get("user-agent") || "unknown"
-  );
-}
+import { getRequestIp, getRequestUserAgent } from "@/shared/security/request-meta";
 
 /* -------------------------------------------------------------------------- */
 /*                         Normal appointment routes                          */

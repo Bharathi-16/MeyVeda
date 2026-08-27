@@ -2,6 +2,7 @@ import { createClient } from "@/shared/db/supabase.server";
 
 export type AnalyticsData = {
   totalConsultations: number;
+  totalPatients: number;
   completedThisMonth: number;
   totalRevenue: number;
   revenueThisMonth: number;
@@ -33,7 +34,7 @@ export class AnalyticsRepository {
     const monthStart = `${thisMonth.getFullYear()}-${String(thisMonth.getMonth() + 1).padStart(2, "0")}-01`;
 
     const [consultRes, ratingRes, paymentRes] = await Promise.all([
-      supabase.from("consultations").select("id, duration_min, created_at, is_complete").eq("practitioner_id", practitionerId),
+      supabase.from("consultations").select("id, patient_id, duration_min, created_at, is_complete").eq("practitioner_id", practitionerId),
       supabase.from("ratings").select("stars").eq("practitioner_id", practitionerId),
       supabase.from("payments").select("amount_paise, confirmed_at").eq("status", "success"),
     ]);
@@ -48,8 +49,15 @@ export class AnalyticsRepository {
     const totalRevenue = payments.reduce((a: number, p: any) => a + (p.amount_paise ?? 0), 0);
     const revenueThisMonth = payments.filter((p: any) => p.confirmed_at && p.confirmed_at >= monthStart).reduce((a: number, p: any) => a + (p.amount_paise ?? 0), 0);
 
+    // `patient_id` already uniquely identifies the person, including family
+    // members — each family member gets their own real `patients` row (see
+    // FamilyRepository.addFamilyMember), so a distinct count here naturally
+    // includes them without a separate join to family_members.
+    const totalPatients = new Set(consults.map((c: any) => c.patient_id).filter(Boolean)).size;
+
     return {
       totalConsultations: consults.length,
+      totalPatients,
       completedThisMonth,
       totalRevenue: Math.round(totalRevenue / 100),
       revenueThisMonth: Math.round(revenueThisMonth / 100),

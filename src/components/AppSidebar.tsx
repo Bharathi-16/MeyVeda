@@ -12,7 +12,6 @@ import {
   Sun,
   Folder,
   Activity,
-  MessageSquare,
   Bell,
   User,
   Crown,
@@ -20,12 +19,12 @@ import {
   Edit,
   FileText,
   ClipboardList,
-  TrendingUp,
   CalendarDays,
   ShieldCheck,
   HelpCircle,
   ChevronRight,
-  LogOut
+  LogOut,
+  Users
 } from "lucide-react";
 import React from "react";
 
@@ -45,8 +44,7 @@ const PATIENT_NAV: NavItem[] = [
   { href: "/discover", icon: Search, label: "Discover" },
   // { href: "/dinacharya", icon: Sun, label: "Dinacharya" },
   { href: "/records", icon: Folder, label: "Health Records" },
-  { href: "/apothecary", icon: Activity, label: "Apothecary" },
-  { href: "/messages", icon: MessageSquare, label: "Messages" },
+  // { href: "/apothecary", icon: Activity, label: "Apothecary" },
   { href: "/profile", icon: User, label: "Profile" },
   "separator",
   // { href: "/pro", icon: Crown, label: "MeyVeda Pro", badge: "Pro", exact: true },
@@ -65,26 +63,20 @@ const PRACTITIONER_NAV: NavItem[] = [
     label: "Patient Search",
   },
   {
-    href: "/pro/inbox",
-    icon: MessageSquare,
-    label: "Inbox",
-    badge: "1",
-  },
-  {
     href: "/pro/prescriptions",
     icon: ClipboardList,
     label: "Prescriptions",
-  },
-  {
-    href: "/pro/analytics",
-    icon: TrendingUp,
-    label: "Analytics",
   },
   "separator",
   {
     href: "/pro/availability",
     icon: CalendarDays,
     label: "Availability",
+  },
+  {
+    href: "/pro/assistants",
+    icon: Users,
+    label: "Assistants",
   },
   {
     href: "/profile",
@@ -108,7 +100,11 @@ export function AppSidebar({ open, onClose }: AppSidebarProps) {
   const { user, logout } = useAuth();
 
   const isPractitioner = user?.role === "practitioner";
-  const navItems = isPractitioner ? PRACTITIONER_NAV : PATIENT_NAV;
+  const isAssistant = user?.role === "assistant";
+  const showProNav = isPractitioner || isAssistant;
+  const navItems = showProNav
+    ? PRACTITIONER_NAV.filter((item) => !(isAssistant && item !== "separator" && item.href === "/pro/assistants"))
+    : PATIENT_NAV;
 
   const initials = user?.name
     ? user.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()
@@ -128,7 +124,7 @@ export function AppSidebar({ open, onClose }: AppSidebarProps) {
       >
         {/* Logo */}
         <div className="px-6 pt-6 pb-5 border-b border-border/60 flex-shrink-0">
-          <Link href={isPractitioner ? "/pro" : "/"} onClick={onClose}>
+          <Link href={showProNav ? "/pro" : "/"} onClick={onClose}>
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-herb-gradient flex items-center justify-center shadow-xs">
                 <span className="text-white text-base font-bold font-display">M</span>
@@ -139,7 +135,7 @@ export function AppSidebar({ open, onClose }: AppSidebarProps) {
                   <span className="text-copper">Veda</span>
                 </span>
                 <p className="text-[10px] text-muted-foreground mt-0.5 leading-none">
-                  {isPractitioner ? "Practitioner Portal · HPR" : "AYUSH Digital Health · ABDM"}
+                  {showProNav ? "Practitioner Portal · HPR" : "AYUSH Digital Health · ABDM"}
                 </p>
               </div>
             </div>
@@ -156,10 +152,10 @@ export function AppSidebar({ open, onClose }: AppSidebarProps) {
               }
 
               const active = isActive(pathname, item);
-              const activeColor = isPractitioner ? "bg-copper/10 text-copper font-semibold" : "bg-herb-green/10 text-herb-green font-semibold";
-              const activeIconColor = isPractitioner ? "text-copper" : "text-herb-green";
-              const activeDotColor = isPractitioner ? "bg-copper" : "bg-herb-green";
-              const badgeColor = isPractitioner ? "bg-copper/10 text-copper" : "bg-copper/10 text-copper";
+              const activeColor = showProNav ? "bg-copper/10 text-copper font-semibold" : "bg-herb-green/10 text-herb-green font-semibold";
+              const activeIconColor = showProNav ? "text-copper" : "text-herb-green";
+              const activeDotColor = showProNav ? "bg-copper" : "bg-herb-green";
+              const badgeColor = showProNav ? "bg-copper/10 text-copper" : "bg-copper/10 text-copper";
 
               return (
                 <Link key={`${item.href}-${item.label}`} href={item.href} onClick={onClose} className="group block">

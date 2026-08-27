@@ -6,8 +6,11 @@ export type AuditLogEntry = {
   userId: string;
   role: string;
   action: string;
+  /** Table/module the action targeted, e.g. "practitioners" | "patients" | "assistants" */
   module: string;
   recordId?: string;
+  /** Patient this event relates to, when applicable (e.g. an assistant/doctor acting on a patient record) */
+  patientId?: string;
   ipAddress?: string;
   userAgent?: string;
   metadata?: Record<string, any>;
@@ -61,15 +64,21 @@ function sanitizeMetadata(data: any): any {
 export async function writeAuditLog(entry: AuditLogEntry): Promise<void> {
   const sanitizedMetadata = sanitizeMetadata(entry.metadata);
 
+  // The audit_logs table has no dedicated `role`/`module` columns, so they are
+  // folded into metadata alongside the actor's role for full traceability.
   const logPayload = {
-    user_id: entry.userId,
-    role: entry.role,
+    actor_user_id: entry.userId,
     action: entry.action,
-    module: entry.module,
-    record_id: entry.recordId || null,
-    ip_address: entry.ipAddress || "unknown",
+    entity_type: entry.module,
+    entity_id: entry.recordId || null,
+    patient_id: entry.patientId || null,
+    ip_address: entry.ipAddress && entry.ipAddress !== "unknown" ? entry.ipAddress : null,
     user_agent: entry.userAgent || "unknown",
-    metadata: sanitizedMetadata || {},
+    metadata: {
+      role: entry.role,
+      module: entry.module,
+      ...(sanitizedMetadata || {}),
+    },
     created_at: new Date().toISOString(),
   };
 

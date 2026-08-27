@@ -338,6 +338,38 @@ export class AdminRepository {
     }
   }
 
+  static async getAuditLogs(filters: {
+    module?: string;
+    actorUserId?: string;
+    search?: string;
+    limit?: number;
+  }): Promise<any[]> {
+    const supabase = await createClient();
+    let query = supabase
+      .from("audit_logs")
+      .select("id, actor_user_id, action, entity_type, entity_id, patient_id, ip_address, user_agent, metadata, created_at, actor:users!audit_logs_actor_user_id_fkey ( id, email, mobile, role )")
+      .order("created_at", { ascending: false })
+      .limit(filters.limit ?? 200);
+
+    if (filters.module) {
+      query = query.eq("entity_type", filters.module);
+    }
+    if (filters.actorUserId) {
+      query = query.eq("actor_user_id", filters.actorUserId);
+    }
+    if (filters.search) {
+      query = query.ilike("action", `%${filters.search}%`);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("[AdminRepository] Error fetching audit logs:", error.message);
+      throw new Error("Failed to fetch audit logs from database");
+    }
+    return data ?? [];
+  }
+
   static async getClinics(): Promise<any[]> {
     const supabase = await createClient();
     const { data, error } = await supabase

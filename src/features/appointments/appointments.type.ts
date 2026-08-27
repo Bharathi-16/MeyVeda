@@ -4,11 +4,13 @@ export type AppointmentRow = {
   practitionerId: string;
   consultationId?: string;
   initials: string;
+  timeRaw: string;
   specialty: string;
   date: string;
   dateRaw: string;
   mode: "video" | "clinic";
   status: "upcoming" | "past" | "cancelled";
+  pastOutcome?: "completed" | "missed";
   fee: string;
   duration?: string;
   rating?: number;

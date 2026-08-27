@@ -1,17 +1,27 @@
 import "server-only";
 
 import { ConsultationRepository, type SaveCompleteConsultationInput } from "../repo/consultation.repo";
+import { FamilyRepository } from "../repo/family.repo";
 import { AuthUser } from "@/shared/auth/auth.types";
+import { resolveActingPractitionerUserId } from "@/shared/auth/resolve-practitioner-context";
 import { ForbiddenError, AppError } from "@/shared/api/api-error";
+import { sendPostConsultationEmails } from "./consultation-email.helper";
 
 export class ConsultationService {
-  static async getDetailedConsultations(authUser: AuthUser): Promise<any[]> {
+  static async getDetailedConsultations(authUser: AuthUser, familyMemberId?: string | null): Promise<any[]> {
     if (authUser.role !== "patient") return [];
 
-    const patientId = await ConsultationRepository.getPatientIdFromUserId(authUser.id);
-    if (!patientId) return [];
+    const ownerPatientId = await ConsultationRepository.getPatientIdFromUserId(authUser.id);
+    if (!ownerPatientId) return [];
 
-    return ConsultationRepository.getDetailedConsultationsForPatient(patientId);
+    if (!familyMemberId) {
+      return ConsultationRepository.getDetailedConsultationsForPatient(ownerPatientId);
+    }
+
+    const familyMemberPatientId = await FamilyRepository.getFamilyMemberPatientId(familyMemberId, ownerPatientId);
+    if (!familyMemberPatientId) return [];
+
+    return ConsultationRepository.getDetailedConsultationsForPatient(familyMemberPatientId);
   }
 
   static async getConsultationReportData(authUser: AuthUser, consultationId: string): Promise<any> {
@@ -26,8 +36,14 @@ export class ConsultationService {
       if (authUser.role === "patient") {
         const patientId = await ConsultationRepository.getPatientIdFromUserId(authUser.id);
         authorized = !!patientId && owner.patient_id === patientId;
-      } else if (authUser.role === "doctor" || (authUser.role as string) === "practitioner") {
-        const practitionerId = await ConsultationRepository.getPractitionerIdFromUserId(authUser.id);
+      } else if (
+        authUser.role === "doctor" ||
+        (authUser.role as string) === "practitioner" ||
+        authUser.role === "assistant"
+      ) {
+        const practitionerId = await ConsultationRepository.getPractitionerIdFromUserId(
+          await resolveActingPractitionerUserId(authUser)
+        );
         authorized = !!practitionerId && owner.practitioner_id === practitionerId;
       }
 
@@ -43,8 +59,52 @@ export class ConsultationService {
     return report;
   }
 
-  static async saveCompleteConsultation(authUser: AuthUser, payload: Omit<SaveCompleteConsultationInput, "practitionerId">): Promise<void> {
-    if (authUser.role !== "doctor" && (authUser.role as string) !== "practitioner") {
+  /** Consultation report data enriched with the doctor fee, for invoice generation. Invoice is consultation-fee only — no medicine line items. */
+  static async getConsultationInvoiceData(authUser: AuthUser, consultationId: string): Promise<any> {
+    const report = await this.getConsultationReportData(authUser, consultationId);
+
+    // Use the fee for the mode this consultation actually happened in — a clinic visit is
+    // billed at the practitioner's clinic fee, not their (possibly unset) video fee.
+    const practitionerFees = report.practitioners as any;
+    const doctorFeePaise =
+      report.mode === "video"
+        ? practitionerFees?.base_video_fee ?? 0
+        : (practitionerFees?.base_clinic_fee || practitionerFees?.base_video_fee) ?? 0;
+
+    const totalPaise = doctorFeePaise;
+
+    const emrNote = Array.isArray(report.emr_notes) ? report.emr_notes[0] : report.emr_notes;
+    let paymentMethod: "cash" | "online" | null = null;
+    if (emrNote?.assessment) {
+      try {
+        const parsed = JSON.parse(emrNote.assessment);
+        if (parsed.paymentMethod === "cash" || parsed.paymentMethod === "online") {
+          paymentMethod = parsed.paymentMethod;
+        }
+      } catch {
+        // assessment wasn't JSON (older records) — leave paymentMethod unset
+      }
+    }
+
+    return {
+      ...report,
+      invoice: {
+        doctorFeePaise,
+        totalPaise,
+        paymentMethod,
+      },
+    };
+  }
+
+  static async saveCompleteConsultation(
+    authUser: AuthUser,
+    payload: Omit<SaveCompleteConsultationInput, "practitionerId">,
+  ): Promise<{ consultationId: string; prescriptionId: string; patientId: string }> {
+    if (
+      authUser.role !== "doctor" &&
+      (authUser.role as string) !== "practitioner" &&
+      authUser.role !== "assistant"
+    ) {
       throw new ForbiddenError("Only practitioners can record consultations");
     }
     if (!payload.patientId) {
@@ -54,27 +114,53 @@ export class ConsultationService {
       throw new Error("Vitals are required");
     }
 
-    // practitionerId is always the authenticated practitioner, never client-supplied
-    await ConsultationRepository.saveCompleteConsultation({ ...payload, practitionerId: authUser.id });
+    // practitionerId is always the authenticated practitioner (or their approved assistant), never client-supplied
+    const result = await ConsultationRepository.saveCompleteConsultation({
+      ...payload,
+      practitionerId: await resolveActingPractitionerUserId(authUser),
+    });
+    const { consultationId } = result;
+
+    // Fire-and-forget: prescription/invoice emails must never fail the save.
+    try {
+      const invoiceData = await this.getConsultationInvoiceData(authUser, consultationId);
+      await sendPostConsultationEmails(invoiceData);
+    } catch (error) {
+      console.error("[ConsultationService] Post-consultation email dispatch failed:", error);
+    }
+
+    return result;
   }
 
   static async getUpcomingCalls(authUser: AuthUser): Promise<any[]> {
     if (authUser.role === "patient") {
       return ConsultationRepository.getUpcomingCallsForPatient(authUser.id);
     }
-    if (authUser.role === "doctor" || (authUser.role as string) === "practitioner") {
-      return ConsultationRepository.getUpcomingCallsForPractitioner(authUser.id);
+    if (
+      authUser.role === "doctor" ||
+      (authUser.role as string) === "practitioner" ||
+      authUser.role === "assistant"
+    ) {
+      return ConsultationRepository.getUpcomingCallsForPractitioner(
+        await resolveActingPractitionerUserId(authUser)
+      );
     }
     return [];
   }
 
-  static async getPatientIntakeDetails(authUser: AuthUser, patientId: string): Promise<any> {
-    if (authUser.role !== "doctor" && (authUser.role as string) !== "practitioner" && authUser.role !== "admin" && authUser.role !== "super_admin") {
+  static async getPatientIntakeDetails(authUser: AuthUser, patientId: string, appointmentId?: string | null): Promise<any> {
+    if (
+      authUser.role !== "doctor" &&
+      (authUser.role as string) !== "practitioner" &&
+      authUser.role !== "assistant" &&
+      authUser.role !== "admin" &&
+      authUser.role !== "super_admin"
+    ) {
       throw new ForbiddenError("Only practitioners can view patient intake details");
     }
     if (!patientId) {
       throw new Error("Patient ID is required");
     }
-    return ConsultationRepository.getPatientIntakeDetails(patientId);
+    return ConsultationRepository.getPatientIntakeDetails(patientId, appointmentId);
   }
 }

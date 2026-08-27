@@ -39,8 +39,10 @@ export class QueueRepository {
         reason_for_visit,
         scheduled_time,
         checked_in_at,
+        family_member_id,
         patient:patients (
           id,
+          user_id,
           full_name,
           date_of_birth,
           user:users (
@@ -52,10 +54,18 @@ export class QueueRepository {
           full_name,
           date_of_birth,
           abha_number
+        ),
+        family_member:family_members (
+          id,
+          full_name,
+          relationship,
+          date_of_birth,
+          gender
         )
       `)
       .eq("practitioner_id", practitionerId)
       .eq("scheduled_date", targetDate)
+      .neq("status", "cancelled")
       .order("scheduled_time", { ascending: true });
 
     if (error) {
@@ -63,16 +73,134 @@ export class QueueRepository {
       throw new Error("Failed to fetch queue from database");
     }
 
+    const isPastDate = targetDate < todayStr;
+    const isToday = targetDate === todayStr;
+
+    if ((isPastDate || isToday) && appointments) {
+      let missedAppointments: any[] = [];
+
+      if (isPastDate) {
+        // A past date that never got resolved: everything still pending is missed.
+        missedAppointments = appointments.filter(
+          (appt: any) => appt.status !== "completed" && appt.status !== "no_show" && appt.status !== "cancelled"
+        );
+      } else {
+        // Same day: a booked slot stays "Waiting" until the next slot's start
+        // time (this slot's own scheduled_time + the practitioner's slot
+        // duration + buffer) — only then, if the doctor never checked the
+        // patient in, does it flip to missed. Anything already checked-in or
+        // in-session is being actively handled and is left alone.
+        const { data: settingsRow } = await supabase
+          .from("practitioners")
+          .select("slot_duration_min, buffer_min")
+          .eq("id", practitionerId)
+          .maybeSingle();
+        const durationMin = settingsRow?.slot_duration_min || 20;
+        const bufferMin = settingsRow?.buffer_min || 0;
+        const now = Date.now();
+
+        missedAppointments = appointments.filter((appt: any) => {
+          if (appt.status !== "scheduled" || !appt.scheduled_time) return false;
+          const [h, m] = appt.scheduled_time.split(":").map(Number);
+          const slotStart = new Date(`${targetDate}T00:00:00`);
+          slotStart.setHours(h, m, 0, 0);
+          const cutoff = slotStart.getTime() + (durationMin + bufferMin) * 60000;
+          return now > cutoff;
+        });
+      }
+
+      if (missedAppointments.length > 0) {
+        let practitionerName: string | null = null;
+        const { data: practitionerRow } = await supabase
+          .from("practitioners")
+          .select("full_name")
+          .eq("id", practitionerId)
+          .maybeSingle();
+        practitionerName = practitionerRow?.full_name ?? null;
+
+        await Promise.all(
+          missedAppointments.map(async (appt: any) => {
+            // Conditional update ensures only one caller ever "wins" the
+            // transition for a given appointment, so a notification is
+            // created at most once even if this runs concurrently.
+            // The DB enum (appointment_status) doesn't have a "missed" value —
+            // its terminal label for this is "no_show". The API still reports
+            // it to the frontend as "missed" (see mappedStatus below).
+            const { data: updated, error: updateError } = await supabase
+              .from("appointments")
+              .update({ status: "no_show" })
+              .eq("id", appt.id)
+              .eq("status", appt.status)
+              .select("id");
+
+            if (updateError) {
+              console.error("[QueueRepository] Error marking appointment missed:", updateError.message);
+              return;
+            }
+            if (!updated || updated.length === 0) return;
+
+            appt.status = "no_show";
+
+            const patientUserId = appt.patient?.user_id;
+            if (patientUserId) {
+              const apptTime = formatTime(appt.scheduled_time);
+              const formattedDate = new Date(`${targetDate}T00:00:00`).toLocaleDateString("en-US", {
+                month: "long",
+                day: "numeric",
+                year: "numeric",
+              });
+
+              const { error: notifError } = await supabase.from("notifications").insert({
+                user_id: patientUserId,
+                title: "Appointment Missed",
+                body: `Your appointment with ${practitionerName || "your practitioner"} on ${formattedDate} at ${apptTime} was missed. You can book another appointment if you would like to continue your consultation.`,
+                type: "missed_appointment",
+                is_read: false,
+              });
+
+              if (notifError) {
+                console.error("[QueueRepository] Error inserting missed appointment notification:", notifError.message);
+              }
+            }
+          })
+        );
+      }
+    }
+
+    // For completed appointments, the "time" shown should be when the
+    // consultation was actually completed, not the originally scheduled
+    // slot time (which stays correct/unchanged for pending queue entries).
+    const completedAppointmentIds = (appointments || [])
+      .filter((appt: any) => appt.status === "completed")
+      .map((appt: any) => appt.id);
+
+    const completionTimeByAppointmentId: Record<string, string> = {};
+    if (completedAppointmentIds.length > 0) {
+      const { data: consults, error: consultsError } = await supabase
+        .from("consultations")
+        .select("appointment_id, created_at")
+        .in("appointment_id", completedAppointmentIds);
+
+      if (consultsError) {
+        console.error("[QueueRepository] Error fetching consultation completion times:", consultsError.message);
+      } else {
+        for (const c of consults ?? []) {
+          if (c.appointment_id && c.created_at) completionTimeByAppointmentId[c.appointment_id] = c.created_at;
+        }
+      }
+    }
+
     return (appointments || []).map((appt: any) => {
       const patient = appt.patient || {};
       const profile = appt.patient_profile || {};
+      const familyMember = appt.family_member;
 
       const userObj = Array.isArray(patient.user) ? patient.user[0] : patient.user;
       const abhaList = userObj?.abha_links || [];
       const abhaId = abhaList.length > 0 ? abhaList[0].abha_id : profile.abha_number;
 
-      const fullName = patient.full_name || profile.full_name || "Unknown";
-      const dob = patient.date_of_birth || profile.date_of_birth;
+      const fullName = familyMember?.full_name || patient.full_name || profile.full_name || "Unknown";
+      const dob = familyMember?.date_of_birth || patient.date_of_birth || profile.date_of_birth;
 
       let age = 0;
       if (dob) {
@@ -99,13 +227,21 @@ export class QueueRepository {
       if (appt.status === "checked_in") mappedStatus = "checked-in";
       else if (appt.status === "in_session") mappedStatus = "in-session";
       else if (appt.status === "completed") mappedStatus = "completed";
+      else if (appt.status === "no_show" || appt.status === "missed") mappedStatus = "missed";
+
+      const completedAt = completionTimeByAppointmentId[appt.id];
+      const displayTime =
+        mappedStatus === "completed" && completedAt
+          ? new Date(completedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
+          : formatTime(appt.scheduled_time);
 
       return {
         id: patient.id || profile.id,
         appointmentId: appt.id,
         name: fullName,
+        relationship: familyMember?.relationship || null,
         age,
-        time: formatTime(appt.scheduled_time),
+        time: displayTime,
         mode: appt.mode,
         status: mappedStatus,
         waitMins: Math.max(0, waitMins),
@@ -156,6 +292,7 @@ export class QueueRepository {
         reason_for_visit,
         scheduled_date,
         scheduled_time,
+        family_member_id,
         patient:patients (
           id,
           full_name,
@@ -165,6 +302,13 @@ export class QueueRepository {
         patient_profile:patient_profiles (
           id,
           full_name,
+          date_of_birth,
+          gender
+        ),
+        family_member:family_members (
+          id,
+          full_name,
+          relationship,
           date_of_birth,
           gender
         )
@@ -186,10 +330,11 @@ export class QueueRepository {
     return (appointments || []).map((appt: any) => {
       const patient = appt.patient || {};
       const profile = appt.patient_profile || {};
+      const familyMember = appt.family_member;
 
-      const fullName = patient.full_name || profile.full_name || "Unknown";
-      const dob = patient.date_of_birth || profile.date_of_birth;
-      const gender = patient.gender || profile.gender || "";
+      const fullName = familyMember?.full_name || patient.full_name || profile.full_name || "Unknown";
+      const dob = familyMember?.date_of_birth || patient.date_of_birth || profile.date_of_birth;
+      const gender = familyMember?.gender || patient.gender || profile.gender || "";
 
       let age = 0;
       if (dob) {
@@ -205,6 +350,7 @@ export class QueueRepository {
         appointmentId: appt.id,
         patientId: patient.id || profile.id,
         name: fullName,
+        relationship: familyMember?.relationship || null,
         age,
         gender,
         date: appt.scheduled_date,

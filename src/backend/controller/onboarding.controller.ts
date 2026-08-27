@@ -10,6 +10,8 @@ import { getAuthFromRequest } from "@/backend/middleware/auth.middleware";
 import { requireAuth } from "@/shared/auth/require-auth";
 import { AppError } from "@/shared/api/api-error";
 import { OnboardingService } from "../service/onboarding.service";
+import { writeAuditLog } from "@/shared/security/audit-log";
+import { getRequestIp, getRequestUserAgent } from "@/shared/security/request-meta";
 
 /**
  * POST /api/auth/onboard-doctor
@@ -67,28 +69,32 @@ export async function onboardDoctor(req: NextRequest) {
  */
 export async function onboardPatient(req: NextRequest) {
   const body = await req.json();
-  const { email, fullName, dateOfBirth, gender, phone, address, abhaNumber,
-    emergencyContactName, emergencyContactPhone, allergies, chronicConditions, currentMedications } = body;
+  const { email, fullName, dateOfBirth, gender, bloodGroup, phone, address, abhaNumber, ayushNumber,
+    emergencyContacts, allergies, chronicConditions, currentMedications } = body;
 
   if (!email || !fullName) {
     return errorResponse("Email and full name are required", 400);
   }
 
   try {
-    // 1. Post to both patients table and users table via service
+    // 1. Post to both patients table and users table via service.
+    // Fields the caller didn't send stay undefined here (no `?? []`/`?? ""`
+    // defaulting) so the repo layer can tell "not provided" apart from
+    // "explicitly cleared" and leave already-saved values alone.
     const userId = await OnboardingService.savePatientProfile({
       email,
       fullName,
       dateOfBirth,
       gender,
+      bloodGroup,
       phone: phone ?? "",
       address,
       abhaNumber,
-      emergencyContactName,
-      emergencyContactPhone,
-      allergies: allergies ?? [],
-      chronicConditions: chronicConditions ?? [],
-      currentMedications: currentMedications ?? [],
+      ayushNumber,
+      emergencyContacts,
+      allergies,
+      chronicConditions,
+      currentMedications,
     });
 
   // 3. Issue auth cookies so the user is immediately logged in
@@ -149,6 +155,16 @@ export async function verifyDoctorController(
     const { id } = await context.params;
     const body = await req.json();
     await OnboardingService.verifyDoctor(authUser, id, body.doctorId, body.status, body.reason);
+    await writeAuditLog({
+      userId: authUser.id,
+      role: authUser.role,
+      action: "verify_doctor_onboarding",
+      module: "practitioners",
+      recordId: body.doctorId || id,
+      ipAddress: getRequestIp(req),
+      userAgent: getRequestUserAgent(req),
+      metadata: { status: body.status, reason: body.reason },
+    });
     return successResponse({ success: true });
   } catch (error: unknown) {
     const statusCode = error instanceof AppError ? error.statusCode : 400;

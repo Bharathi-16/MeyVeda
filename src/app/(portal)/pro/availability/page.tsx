@@ -3,12 +3,14 @@
 import { useState, useEffect, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
-import {useCalendarAvailability } from "@/hooks/use-availability";
+import { useCalendarAvailability } from "@/hooks/use-availability";
 import { usePractitioner } from "@/hooks/use-discover";
-import { updateCalendarAvailability,updatePractitionerSettings,CalendarAvailabilityRow } from "@/hooks/use-availability";
-import {ChevronLeft, ChevronRight, Plus, Trash2, Check, Save, Copy, Clock, Coffee, Building, Video
+import { updateCalendarAvailability, updatePractitionerSettings, CalendarAvailabilityRow } from "@/hooks/use-availability";
+import {
+  ChevronLeft, ChevronRight, Plus, Trash2, Check, Save, Copy, Clock, Coffee, Building, Video
 } from "lucide-react";
 import toast from "react-hot-toast";
+import { ENABLE_VIDEO_CONSULTATION } from "@/lib/feature-flags";
 
 const DAYS_OF_WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -25,7 +27,7 @@ function formatDateKey(date: Date) {
 
 export default function AvailabilityPage() {
   const { user } = useAuth();
-  
+
   const today = new Date();
   const [currentMonth, setCurrentMonth] = useState(today.getMonth());
   const [currentYear, setCurrentYear] = useState(today.getFullYear());
@@ -44,7 +46,9 @@ export default function AvailabilityPage() {
   const [isSaving, setIsSaving] = useState(false);
 
   // Settings state (Global per practitioner)
-  const [consultationMode, setConsultationMode] = useState<"both" | "video" | "clinic">("both");
+  const [consultationMode, setConsultationMode] = useState<"both" | "video" | "clinic">(
+    ENABLE_VIDEO_CONSULTATION ? "both" : "clinic"
+  );
   const [videoFee, setVideoFee] = useState(399);
   const [clinicFee, setClinicFee] = useState(250);
   const [slotDuration, setSlotDuration] = useState(30);
@@ -64,7 +68,8 @@ export default function AvailabilityPage() {
     if (practitioner) {
       setSlotDuration(practitioner.slotDuration || 30);
       setBufferMins(practitioner.bufferMin || 0);
-      // setConsultationMode, setVideoFee, setClinicFee if provided in the schema
+      if (practitioner.videoFee) setVideoFee(practitioner.videoFee);
+      if (practitioner.clinicFee) setClinicFee(practitioner.clinicFee);
     }
   }, [practitioner]);
 
@@ -75,7 +80,7 @@ export default function AvailabilityPage() {
 
     const totalDays = new Date(currentYear, currentMonth + 1, 0).getDate();
     const days = [];
-    
+
     for (let i = 0; i < startDayOfWeek; i++) {
       days.push(null);
     }
@@ -116,7 +121,7 @@ export default function AvailabilityPage() {
       const existing = prev[dateStr] || {
         date: dateStr,
         working_start: "09:00",
-        working_end: "17:00",
+        working_end: "22:00",
         breaks: [],
         op_timings: [],
         slots: [], // In a real app we might auto-generate slots here based on working_start and breaks
@@ -131,7 +136,7 @@ export default function AvailabilityPage() {
   const selectedData = availability[selectedDate] || {
     date: selectedDate,
     working_start: "09:00",
-    working_end: "17:00",
+    working_end: "22:00",
     breaks: [],
     op_timings: [],
     slots: [],
@@ -147,7 +152,7 @@ export default function AvailabilityPage() {
       if (updates.length > 0) {
         await updateCalendarAvailability(user.id, updates);
       }
-      
+
       await updatePractitionerSettings(user.id, {
         baseVideoFee: videoFee,
         baseClinicFee: clinicFee,
@@ -187,7 +192,7 @@ export default function AvailabilityPage() {
           disabled={isSaving || !hasChanges}
           className={cn(
             "px-6 py-2.5 rounded-full font-bold text-sm transition-all shadow-sm flex items-center gap-2",
-            hasChanges 
+            hasChanges
               ? "bg-[#254EDb] text-white hover:bg-blue-700 active:scale-95"
               : "bg-blue-600 text-white opacity-50 cursor-not-allowed"
           )}
@@ -198,14 +203,14 @@ export default function AvailabilityPage() {
       </div>
 
       <div className="flex flex-col lg:flex-row gap-6">
-        
+
         {/* LEFT: COMPACT CALENDAR (30%) */}
         <div className="w-full lg:w-[320px] shrink-0 space-y-6">
           <div className="bg-white rounded-3xl p-5 border border-neutral-150 shadow-sm">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
-                <button 
-                  onClick={prevMonth} 
+                <button
+                  onClick={prevMonth}
                   disabled={isPrevDisabled}
                   className={cn(
                     "p-1 border border-neutral-200 rounded-full",
@@ -219,7 +224,7 @@ export default function AvailabilityPage() {
                   <ChevronRight size={16} />
                 </button>
               </div>
-              <button 
+              <button
                 onClick={() => {
                   setCurrentMonth(today.getMonth());
                   setCurrentYear(today.getFullYear());
@@ -240,7 +245,7 @@ export default function AvailabilityPage() {
             <div className="grid grid-cols-7 gap-1.5">
               {calendarDays.map((d, i) => {
                 if (!d) return <div key={`empty-${i}`} className="h-8" />;
-                
+
                 const isPast = d.dateStr < todayKey;
                 const isSelected = selectedDate === d.dateStr;
                 const statusClass = getDateStatusClass(d.dateStr);
@@ -268,10 +273,10 @@ export default function AvailabilityPage() {
         {/* RIGHT: SELECTED DATE DETAILS (70%) */}
         <div className="flex-1 min-w-0">
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-            
+
             {/* COLUMN 1: Daily Working Hours */}
             <div className="space-y-6">
-              
+
               {/* Daily Title & Toggle */}
               <div className="bg-white rounded-3xl p-6 border border-neutral-150 shadow-sm flex items-center justify-between">
                 <div>
@@ -304,11 +309,11 @@ export default function AvailabilityPage() {
                       <div className="flex-1">
                         <span className="text-[10px] text-muted-foreground block mb-1">Start</span>
                         <div className="border border-neutral-200 rounded-full px-4 py-2 flex items-center">
-                          <input 
-                            type="time" 
+                          <input
+                            type="time"
                             value={selectedData.working_start || "09:00"}
                             onChange={(e) => mutateDate(selectedDate, d => ({ ...d, working_start: e.target.value }))}
-                            className="bg-transparent border-none text-sm font-medium w-full focus:outline-none" 
+                            className="bg-transparent border-none text-sm font-medium w-full focus:outline-none"
                           />
                         </div>
                       </div>
@@ -316,11 +321,11 @@ export default function AvailabilityPage() {
                       <div className="flex-1">
                         <span className="text-[10px] text-muted-foreground block mb-1">End</span>
                         <div className="border border-neutral-200 rounded-full px-4 py-2 flex items-center">
-                          <input 
-                            type="time" 
+                          <input
+                            type="time"
                             value={selectedData.working_end || "17:00"}
                             onChange={(e) => mutateDate(selectedDate, d => ({ ...d, working_end: e.target.value }))}
-                            className="bg-transparent border-none text-sm font-medium w-full focus:outline-none" 
+                            className="bg-transparent border-none text-sm font-medium w-full focus:outline-none"
                           />
                         </div>
                       </div>
@@ -333,7 +338,7 @@ export default function AvailabilityPage() {
                       <h4 className="text-xs font-bold text-muted-foreground flex items-center gap-2">
                         <span className="w-4 h-4 rounded-full bg-orange-100 flex items-center justify-center text-orange-500"><Coffee size={10} /></span> Breaks <span className="bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full text-[10px]">{selectedData.breaks?.length || 0}</span>
                       </h4>
-                      <button 
+                      <button
                         onClick={() => mutateDate(selectedDate, d => ({ ...d, breaks: [...(d.breaks || []), { start: "13:00", end: "14:00" }] }))}
                         className="text-[10px] font-bold text-[#254EDb] flex items-center gap-1"
                       >
@@ -342,35 +347,35 @@ export default function AvailabilityPage() {
                     </div>
                     <div className="space-y-3">
                       {selectedData.breaks?.map((brk, idx) => (
-                        <div key={idx} className="flex items-center gap-4 bg-orange-50/50 p-3 rounded-2xl border border-orange-100/50">
-                          <input 
-                            type="time" 
+                        <div key={idx} className="flex items-center gap-2 bg-orange-50/50 p-3 rounded-2xl border border-orange-100/50">
+                          <input
+                            type="time"
                             value={brk.start}
                             onChange={(e) => mutateDate(selectedDate, d => {
                               const newBreaks = [...d.breaks];
                               newBreaks[idx].start = e.target.value;
                               return { ...d, breaks: newBreaks };
                             })}
-                            className="bg-white border border-neutral-200 rounded-full px-3 py-1.5 text-xs font-medium w-28 focus:outline-none" 
+                            className="bg-white border border-neutral-200 rounded-full px-2.5 py-1.5 text-xs font-medium flex-1 min-w-0 focus:outline-none"
                           />
-                          <div className="text-neutral-300">→</div>
-                          <input 
-                            type="time" 
+                          <div className="text-neutral-300 flex-shrink-0">→</div>
+                          <input
+                            type="time"
                             value={brk.end}
                             onChange={(e) => mutateDate(selectedDate, d => {
                               const newBreaks = [...d.breaks];
                               newBreaks[idx].end = e.target.value;
                               return { ...d, breaks: newBreaks };
                             })}
-                            className="bg-white border border-neutral-200 rounded-full px-3 py-1.5 text-xs font-medium w-28 focus:outline-none" 
+                            className="bg-white border border-neutral-200 rounded-full px-2.5 py-1.5 text-xs font-medium flex-1 min-w-0 focus:outline-none"
                           />
-                          <button 
+                          <button
                             onClick={() => mutateDate(selectedDate, d => {
                               const newBreaks = [...d.breaks];
                               newBreaks.splice(idx, 1);
                               return { ...d, breaks: newBreaks };
                             })}
-                            className="p-2 ml-auto text-neutral-400 hover:text-red-500"
+                            className="p-1.5 flex-shrink-0 text-neutral-400 hover:text-red-500"
                           >
                             <Trash2 size={14} />
                           </button>
@@ -385,7 +390,7 @@ export default function AvailabilityPage() {
                       <h4 className="text-xs font-bold text-muted-foreground flex items-center gap-2">
                         <span className="w-4 h-4 rounded-full bg-blue-100 flex items-center justify-center text-blue-500"><Building size={10} /></span> OP Timings <span className="bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full text-[10px]">{selectedData.op_timings?.length || 0}</span>
                       </h4>
-                      <button 
+                      <button
                         onClick={() => mutateDate(selectedDate, d => ({ ...d, op_timings: [...(d.op_timings || []), { start: "15:00", end: "16:00" }] }))}
                         className="text-[10px] font-bold text-[#254EDb] flex items-center gap-1"
                       >
@@ -394,35 +399,35 @@ export default function AvailabilityPage() {
                     </div>
                     <div className="space-y-3">
                       {selectedData.op_timings?.map((op, idx) => (
-                        <div key={idx} className="flex items-center gap-4 bg-blue-50/50 p-3 rounded-2xl border border-blue-100/50">
-                          <input 
-                            type="time" 
+                        <div key={idx} className="flex items-center gap-2 bg-blue-50/50 p-3 rounded-2xl border border-blue-100/50">
+                          <input
+                            type="time"
                             value={op.start}
                             onChange={(e) => mutateDate(selectedDate, d => {
                               const newOps = [...(d.op_timings || [])];
                               newOps[idx].start = e.target.value;
                               return { ...d, op_timings: newOps };
                             })}
-                            className="bg-white border border-neutral-200 rounded-full px-3 py-1.5 text-xs font-medium w-28 focus:outline-none" 
+                            className="bg-white border border-neutral-200 rounded-full px-2.5 py-1.5 text-xs font-medium flex-1 min-w-0 focus:outline-none"
                           />
-                          <div className="text-neutral-300">→</div>
-                          <input 
-                            type="time" 
+                          <div className="text-neutral-300 flex-shrink-0">→</div>
+                          <input
+                            type="time"
                             value={op.end}
                             onChange={(e) => mutateDate(selectedDate, d => {
                               const newOps = [...(d.op_timings || [])];
                               newOps[idx].end = e.target.value;
                               return { ...d, op_timings: newOps };
                             })}
-                            className="bg-white border border-neutral-200 rounded-full px-3 py-1.5 text-xs font-medium w-28 focus:outline-none" 
+                            className="bg-white border border-neutral-200 rounded-full px-2.5 py-1.5 text-xs font-medium flex-1 min-w-0 focus:outline-none"
                           />
-                          <button 
+                          <button
                             onClick={() => mutateDate(selectedDate, d => {
                               const newOps = [...(d.op_timings || [])];
                               newOps.splice(idx, 1);
                               return { ...d, op_timings: newOps };
                             })}
-                            className="p-2 ml-auto text-neutral-400 hover:text-red-500"
+                            className="p-1.5 flex-shrink-0 text-neutral-400 hover:text-red-500"
                           >
                             <Trash2 size={14} />
                           </button>
@@ -436,60 +441,64 @@ export default function AvailabilityPage() {
 
             {/* COLUMN 2: Global Config & Preview */}
             <div className="space-y-6">
-              
+
               {/* Consultation Mode */}
-              <div className="bg-white rounded-3xl p-6 border border-neutral-150 shadow-sm">
-                <h4 className="text-xs font-bold text-muted-foreground mb-4">Consultation Mode</h4>
-                <div className="space-y-2">
-                  {[
-                    { id: "both", label: "Video & In-Clinic", icon: <Building size={14} /> },
-                    { id: "video", label: "Video Only", icon: <Video size={14} /> },
-                    { id: "clinic", label: "In-Clinic Only", icon: <Building size={14} /> }
-                  ].map(mode => (
-                    <button
-                      key={mode.id}
-                      onClick={() => setConsultationMode(mode.id as any)}
-                      className={cn(
-                        "w-full flex items-center gap-3 px-4 py-3 rounded-2xl border transition-all text-sm font-medium",
-                        consultationMode === mode.id 
-                          ? "border-[#254EDb] bg-blue-50/50 text-[#254EDb]" 
-                          : "border-neutral-200 text-neutral-600 hover:bg-neutral-50"
-                      )}
-                    >
-                      <div className={cn("w-4 h-4 rounded-full border flex items-center justify-center", consultationMode === mode.id ? "border-[#254EDb]" : "border-neutral-300")}>
-                        {consultationMode === mode.id && <div className="w-2.5 h-2.5 rounded-full bg-[#254EDb]" />}
-                      </div>
-                      <span className="flex items-center gap-2">{mode.icon} {mode.label}</span>
-                    </button>
-                  ))}
+              {ENABLE_VIDEO_CONSULTATION && (
+                <div className="bg-white rounded-3xl p-6 border border-neutral-150 shadow-sm">
+                  <h4 className="text-xs font-bold text-muted-foreground mb-4">Consultation Mode</h4>
+                  <div className="space-y-2">
+                    {[
+                      { id: "both", label: "Video & In-Clinic", icon: <Building size={14} /> },
+                      { id: "video", label: "Video Only", icon: <Video size={14} /> },
+                      { id: "clinic", label: "In-Clinic Only", icon: <Building size={14} /> }
+                    ].map(mode => (
+                      <button
+                        key={mode.id}
+                        onClick={() => { setConsultationMode(mode.id as any); setHasChanges(true); }}
+                        className={cn(
+                          "w-full flex items-center gap-3 px-4 py-3 rounded-2xl border transition-all text-sm font-medium",
+                          consultationMode === mode.id
+                            ? "border-[#254EDb] bg-blue-50/50 text-[#254EDb]"
+                            : "border-neutral-200 text-neutral-600 hover:bg-neutral-50"
+                        )}
+                      >
+                        <div className={cn("w-4 h-4 rounded-full border flex items-center justify-center", consultationMode === mode.id ? "border-[#254EDb]" : "border-neutral-300")}>
+                          {consultationMode === mode.id && <div className="w-2.5 h-2.5 rounded-full bg-[#254EDb]" />}
+                        </div>
+                        <span className="flex items-center gap-2">{mode.icon} {mode.label}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Consultation Fees */}
               <div className="bg-white rounded-3xl p-6 border border-neutral-150 shadow-sm">
                 <h4 className="text-xs font-bold text-muted-foreground mb-4">Consultation Fees</h4>
                 <div className="space-y-4">
-                  <div>
-                    <label className="text-[10px] text-muted-foreground flex items-center gap-1.5 mb-1"><Video size={12} /> Video Consultation Fee</label>
-                    <div className="relative">
-                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-500 font-medium">₹</span>
-                      <input 
-                        type="number" 
-                        value={videoFee}
-                        onChange={e => setVideoFee(Number(e.target.value))}
-                        className="w-full pl-8 pr-4 py-2 border border-neutral-200 rounded-full text-sm font-medium focus:outline-none focus:border-[#254EDb]" 
-                      />
+                  {ENABLE_VIDEO_CONSULTATION && (
+                    <div>
+                      <label className="text-[10px] text-muted-foreground flex items-center gap-1.5 mb-1"><Video size={12} /> Video Consultation Fee</label>
+                      <div className="relative">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-500 font-medium">₹</span>
+                        <input
+                          type="number"
+                          value={videoFee}
+                          onChange={e => { setVideoFee(Number(e.target.value)); setHasChanges(true); }}
+                          className="w-full pl-8 pr-4 py-2 border border-neutral-200 rounded-full text-sm font-medium focus:outline-none focus:border-[#254EDb]"
+                        />
+                      </div>
                     </div>
-                  </div>
+                  )}
                   <div>
                     <label className="text-[10px] text-muted-foreground flex items-center gap-1.5 mb-1"><Building size={12} /> In-Clinic Consultation Fee</label>
                     <div className="relative">
                       <span className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-500 font-medium">₹</span>
-                      <input 
-                        type="number" 
+                      <input
+                        type="number"
                         value={clinicFee}
-                        onChange={e => setClinicFee(Number(e.target.value))}
-                        className="w-full pl-8 pr-4 py-2 border border-neutral-200 rounded-full text-sm font-medium focus:outline-none focus:border-[#254EDb]" 
+                        onChange={e => { setClinicFee(Number(e.target.value)); setHasChanges(true); }}
+                        className="w-full pl-8 pr-4 py-2 border border-neutral-200 rounded-full text-sm font-medium focus:outline-none focus:border-[#254EDb]"
                       />
                     </div>
                   </div>
@@ -503,7 +512,7 @@ export default function AvailabilityPage() {
                   {[15, 20, 30, 45, 60].map(mins => (
                     <button
                       key={mins}
-                      onClick={() => setSlotDuration(mins)}
+                      onClick={() => { setSlotDuration(mins); setHasChanges(true); }}
                       className={cn(
                         "px-4 py-2 rounded-full text-xs font-bold border transition-all",
                         slotDuration === mins
@@ -525,7 +534,7 @@ export default function AvailabilityPage() {
                   {[0, 5, 10, 15].map(mins => (
                     <button
                       key={mins}
-                      onClick={() => setBufferMins(mins)}
+                      onClick={() => { setBufferMins(mins); setHasChanges(true); }}
                       className={cn(
                         "px-4 py-2 rounded-full text-xs font-bold border transition-all",
                         bufferMins === mins
@@ -536,14 +545,6 @@ export default function AvailabilityPage() {
                       {mins === 0 ? "None" : `${mins}m`}
                     </button>
                   ))}
-                </div>
-              </div>
-
-              {/* Slot Preview */}
-              <div className="bg-white rounded-3xl p-6 border border-neutral-150 shadow-sm">
-                <h4 className="text-xs font-bold text-muted-foreground mb-4">Slot Preview - Selected Date</h4>
-                <div className="bg-neutral-50 rounded-2xl border border-neutral-200 p-4 min-h-[100px] flex items-center justify-center">
-                  <p className="text-xs font-medium text-neutral-500">Slots will be generated based on working hours, breaks, and slot duration.</p>
                 </div>
               </div>
 

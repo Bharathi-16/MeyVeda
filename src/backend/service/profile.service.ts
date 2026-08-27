@@ -20,6 +20,7 @@ export const updateProfileSchema = z.object({
   city: z.string().trim().optional(),
   pinCode: z.string().trim().optional(),
   prakriti: z.string().trim().optional(),
+  avatarUrl: z.string().trim().optional(),
 });
 
 export type UpdateProfileInput = z.infer<

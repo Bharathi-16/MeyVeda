@@ -3,8 +3,9 @@
 import { useQuery } from "./useQuery";
 import { apiClient } from "@/shared/api/api-client";
 
-export async function fetchDetailedConsultations(): Promise<any[]> {
-  const response = await apiClient<{ data: any[] }>("/api/consultations/detailed");
+export async function fetchDetailedConsultations(familyMemberId?: string | null): Promise<any[]> {
+  const query = familyMemberId ? `?familyMemberId=${encodeURIComponent(familyMemberId)}` : "";
+  const response = await apiClient<{ data: any[] }>(`/api/consultations/detailed${query}`);
   return response.data;
 }
 

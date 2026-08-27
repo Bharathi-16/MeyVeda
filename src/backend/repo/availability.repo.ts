@@ -431,7 +431,8 @@ export class AvailabilityRepository {
 
     const [
       { data: prescriptions, error: prescriptionError },
-      { data: appointments, error: appointmentError },
+      { data: appointmentsByPractitioner, error: appointmentError },
+      { data: appointmentsByProfile, error: appointmentProfileError },
     ] = await Promise.all([
       supabase
         .from("prescriptions")
@@ -447,7 +448,25 @@ export class AvailabilityRepository {
         .eq("practitioner_id", practitionerId)
         .eq("scheduled_date", date)
         .neq("status", "cancelled"),
+      // Appointments booked through the newer doctor-profile flow only set
+      // `doctor_profile_id`, not `practitioner_id` — check both columns so a
+      // slot booked through either path is correctly hidden here.
+      supabase
+        .from("appointments")
+        .select("scheduled_time")
+        .eq("doctor_profile_id", practitionerId)
+        .eq("scheduled_date", date)
+        .neq("status", "cancelled"),
     ]);
+
+    if (appointmentProfileError) {
+      console.error(
+        "[AvailabilityRepository] Appointment (doctor profile) fetch failed:",
+        appointmentProfileError.message,
+      );
+    }
+
+    const appointments = [...(appointmentsByPractitioner ?? []), ...(appointmentsByProfile ?? [])];
 
     if (prescriptionError) {
       console.error(

@@ -17,6 +17,8 @@ export type ProfileEntity = {
   abhaId: string | null;
   abhaAddress: string | null;
   address?: string;
+  avatarUrl?: string | null;
+  linkedDoctorName?: string | null;
 };
 
 export type UpdateProfileFields = {
@@ -29,6 +31,7 @@ export type UpdateProfileFields = {
   email?: string;
   phone?: string;
   prakriti?: string;
+  avatarUrl?: string;
 };
 
 function normalizeRole(role?: string): string {
@@ -42,6 +45,10 @@ function isPractitionerRole(role?: string): boolean {
     normalizedRole === "doctor" ||
     normalizedRole === "practitioner"
   );
+}
+
+function isAssistantRole(role?: string): boolean {
+  return normalizeRole(role) === "assistant";
 }
 
 function calculateAge(dateOfBirth?: string | null): number {
@@ -76,11 +83,82 @@ export class ProfileRepository {
       return this.getAdminProfile(userId);
     }
 
+    if (isAssistantRole(role)) {
+      return this.getAssistantProfile(userId);
+    }
+
     if (isPractitionerRole(role)) {
       return this.getPractitionerProfile(userId);
     }
 
     return this.getPatientProfile(userId);
+  }
+
+  private async getAssistantProfile(userId: string): Promise<ProfileEntity | null> {
+    const baseSelect = `
+        id,
+        full_name,
+        avatar_url,
+        practitioner:practitioners ( full_name ),
+        user:users ( id, mobile, email )
+      `;
+    // date_of_birth/gender/blood_group are a recent addition to the assistants
+    // table — fall back to the base select if they haven't been migrated yet.
+    let { data: assistant, error } = await this.supabase
+      .from("assistants")
+      .select(`${baseSelect}, date_of_birth, gender, blood_group`)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (error?.message?.includes("date_of_birth") || error?.message?.includes("blood_group")) {
+      ({ data: assistant, error } = await this.supabase
+        .from("assistants")
+        .select(baseSelect)
+        .eq("user_id", userId)
+        .maybeSingle());
+    }
+
+    if (error) {
+      console.error("Assistant profile query failed:", {
+        userId,
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+      });
+
+      throw new AppError(
+        `Database error while fetching assistant profile: ${error.message}`,
+        500
+      );
+    }
+
+    if (!assistant) return null;
+
+    const user = Array.isArray(assistant.user) ? assistant.user[0] : assistant.user;
+    const practitioner = Array.isArray(assistant.practitioner)
+      ? assistant.practitioner[0]
+      : assistant.practitioner;
+
+    return {
+      id: assistant.id,
+      name: assistant.full_name ?? "",
+      email: (user as { email?: string } | null)?.email ?? "",
+      phone: (user as { mobile?: string } | null)?.mobile ?? "",
+      dob: (assistant as { date_of_birth?: string }).date_of_birth ?? "",
+      age: calculateAge((assistant as { date_of_birth?: string }).date_of_birth),
+      gender: (assistant as { gender?: string }).gender ?? "",
+      bloodGroup: (assistant as { blood_group?: string }).blood_group ?? "",
+      city: "",
+      pinCode: "",
+      prakriti: "Unknown",
+      wellnessGoals: [],
+      abhaId: null,
+      abhaAddress: null,
+      address: "",
+      avatarUrl: assistant.avatar_url ?? null,
+      linkedDoctorName: (practitioner as { full_name?: string } | null)?.full_name ?? null,
+    };
   }
 
   private async getAdminProfile(userId: string): Promise<ProfileEntity | null> {
@@ -266,7 +344,52 @@ export class ProfileRepository {
     const normalized = normalizeRole(role);
     const isAdmin = normalized === "admin" || normalized === "super_admin";
 
-    if (!isAdmin) {
+    if (isAssistantRole(role)) {
+      const assistantUpdates: Record<string, unknown> = {};
+
+      if (updates.fullName !== undefined) {
+        assistantUpdates.full_name = updates.fullName.trim();
+      }
+      if (updates.avatarUrl !== undefined) {
+        assistantUpdates.avatar_url = updates.avatarUrl || null;
+      }
+      if (updates.dob !== undefined) {
+        assistantUpdates.date_of_birth = updates.dob || null;
+      }
+      if (updates.gender !== undefined) {
+        assistantUpdates.gender = updates.gender ? updates.gender.trim().toLowerCase() : null;
+      }
+      if (updates.bloodGroup !== undefined) {
+        assistantUpdates.blood_group = updates.bloodGroup || null;
+      }
+
+      if (Object.keys(assistantUpdates).length > 0) {
+        let { error } = await this.supabase
+          .from("assistants")
+          .update(assistantUpdates)
+          .eq("user_id", userId);
+
+        // date_of_birth/gender/blood_group are a recent addition — if the
+        // migration hasn't run yet, retry with just the columns that exist.
+        if (error?.message?.includes("date_of_birth") || error?.message?.includes("blood_group")) {
+          const { date_of_birth, gender, blood_group, ...fallback } = assistantUpdates;
+          if (Object.keys(fallback).length > 0) {
+            ({ error } = await this.supabase.from("assistants").update(fallback).eq("user_id", userId));
+          } else {
+            error = null;
+          }
+        }
+
+        if (error) {
+          console.error("Assistant profile update failed:", {
+            userId,
+            message: error.message,
+            code: error.code,
+          });
+          throw new AppError("Database error while updating assistant profile", 500);
+        }
+      }
+    } else if (!isAdmin) {
       const practitioner = isPractitionerRole(role);
 
       const tableName = practitioner

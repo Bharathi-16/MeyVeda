@@ -8,13 +8,14 @@ import {
   type KeyboardEvent,
 } from "react";
 import { useRouter } from "next/navigation";
+import { Info } from "lucide-react"
 
 import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 
 type LoginRole = "doctor" | "patient";
-type UserRole = "practitioner" | "patient" | "admin" | "super_admin";
+type UserRole = "practitioner" | "patient" | "admin" | "super_admin" | "assistant";
 
 interface LoginUserResponse {
   id: string;
@@ -84,6 +85,9 @@ function normalizeUserRole(
   if (backendRole === "admin" || backendRole === "super_admin") {
     return "admin";
   }
+  if (backendRole === "assistant") {
+    return "assistant";
+  }
 
   return getAuthenticatedRole(selectedRole);
 }
@@ -92,7 +96,7 @@ function getDestination(role: UserRole): string {
   if (role === "admin" || role === "super_admin") {
     return "/admin/dashboard";
   }
-  return role === "practitioner" ? "/pro" : "/";
+  return role === "practitioner" || role === "assistant" ? "/pro" : "/";
 }
 
 export default function LoginPage() {
@@ -603,7 +607,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-xs text-white/20">
-          © 2026 MeyVeda · Trivine Tech Solutions
+          ©️ 2026 MeyVeda · Trivine Tech Solutions
         </p>
       </div>
 
@@ -745,6 +749,14 @@ export default function LoginPage() {
                     </button>
                   )}
                 </div>
+                <div className="mt-2 space-y-1 text-left">
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+    <Info className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" />
+    <span>
+      Check your <strong className="font-medium text-foreground">inbox</strong> or <strong className="font-medium text-foreground">spam folder</strong> if you don't see the OTP within 5 minutes.
+    </span>
+  </div>
+              </div>
               </div>
             )}
 

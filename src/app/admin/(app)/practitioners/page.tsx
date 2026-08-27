@@ -24,7 +24,20 @@ async function getDoctorSignedUrl(path: string): Promise<string | null> {
   return response.data.url;
 }
 import { toast } from "react-hot-toast";
-import { FileText, Award, CheckCircle, XCircle, Search, ExternalLink, ShieldCheck, Mail, Phone, Calendar } from "lucide-react";
+import { FileText, Award, CheckCircle, XCircle, Search, ExternalLink, ShieldCheck, Mail, Phone, Calendar, AlertTriangle } from "lucide-react";
+
+function getMissingProfileFields(v: any): string[] {
+  const doc = v.doctor || {};
+  const missing: string[] = [];
+  if (!doc.full_name?.trim()) missing.push("Full name");
+  if (!doc.user?.mobile) missing.push("Phone number");
+  if (!(doc.qualifications?.length > 0)) missing.push("Qualifications");
+  if (!(doc.specializations?.length > 0)) missing.push("Specialty");
+  if (!(doc.languages?.length > 0)) missing.push("Languages");
+  if (!(doc.consultation_fee > 0)) missing.push("Consultation fee");
+  if (!v.degree_url || !v.registration_cert_url) missing.push("Verification documents");
+  return missing;
+}
 
 type Status = "verified" | "pending" | "rejected" | "under_review";
 type PracticeType = "independent" | "hospital" | "both";
@@ -405,8 +418,10 @@ export default function AdminPractitionersPage() {
                   const contact = userObj.email || userObj.mobile || "—";
                   const specialty = doc.specializations?.join(", ") || "Ayurveda";
                   const languages = doc.languages?.join(", ") || "English";
-                  const fee = doc.consultation_fee ? `₹${(doc.consultation_fee / 100).toFixed(0)}` : "Not set";
+                  const fee = doc.consultation_fee ? `₹${doc.consultation_fee.toFixed(0)}` : "Not set";
                   const dateRequested = new Date(v.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+                  const missingFields = getMissingProfileFields(v);
+                  const isProfileComplete = missingFields.length === 0;
                   return (
                     <tr key={v.id} className="hover:bg-background transition-colors">
                       <td className="px-5 py-4">
@@ -466,15 +481,37 @@ export default function AdminPractitionersPage() {
                             &quot;{v.rejection_reason}&quot;
                           </p>
                         )}
+                        {v.status === "pending" && (
+                          isProfileComplete ? (
+                            <span className="flex items-center gap-1 text-[10px] font-semibold text-herb-green bg-herb-green/10 px-2 py-0.5 rounded-full mt-1.5 w-fit">
+                              <CheckCircle size={10} /> Profile details completed
+                            </span>
+                          ) : (
+                            <div className="mt-1.5 max-w-[200px]">
+                              <span className="flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full w-fit">
+                                <AlertTriangle size={10} /> Profile details incomplete
+                              </span>
+                              <p className="text-[9px] text-muted-foreground mt-1 leading-snug">
+                                Missing: {missingFields.join(", ")}
+                              </p>
+                            </div>
+                          )
+                        )}
                       </td>
                       <td className="px-5 py-4 text-right">
                         <div className="flex items-center justify-end gap-2">
                           {v.status === "pending" && (
                             <>
                               <button
-                                disabled={verifyingId === v.id}
+                                disabled={verifyingId === v.id || !isProfileComplete}
                                 onClick={() => handleVerifyNewDoc(v.id, v.doctor_id)}
-                                className="bg-herb-green text-white text-xs font-semibold px-3 py-1.5 rounded-xl hover:bg-herb-green/90 transition-all"
+                                title={!isProfileComplete ? `Doctor must complete: ${missingFields.join(", ")}` : undefined}
+                                className={cn(
+                                  "text-xs font-semibold px-3 py-1.5 rounded-xl transition-all",
+                                  !isProfileComplete
+                                    ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                                    : "bg-herb-green text-white hover:bg-herb-green/90"
+                                )}
                               >
                                 {verifyingId === v.id ? "Verifying..." : "Approve"}
                               </button>

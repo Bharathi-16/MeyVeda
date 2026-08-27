@@ -3,22 +3,27 @@
 import { useState } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { ENABLE_VIDEO_CONSULTATION } from "@/lib/feature-flags";
 
 type FAQ = { q: string; a: string };
 
 const FAQS: FAQ[] = [
   {
     q: "How do I book a consultation?",
-    a: "Go to Discover, search for a practitioner by symptom or name, pick a date and time slot, then complete the booking through the payment step. You'll get a confirmation and can join from Appointments or the Home screen.",
+    a: ENABLE_VIDEO_CONSULTATION
+      ? "Go to Discover, search for a practitioner by symptom or name, pick a date and time slot, then complete the booking through the payment step. You'll get a confirmation and can join from Appointments or the Home screen."
+      : "Go to Discover, search for a practitioner by symptom or name, pick a date and time slot, then tap 'Book Appointment'. You'll get a confirmation and can view it from Appointments or the Home screen. Payment is collected at the clinic.",
   },
   {
     q: "What is ABHA and why should I link it?",
     a: "ABHA (Ayushman Bharat Health Account) is your unique national health ID. Linking it lets you access health records from any ABDM-registered hospital or clinic and share them securely with practitioners.",
   },
-  {
-    q: "How does video consultation work?",
-    a: "Once your appointment time arrives, tap 'Join Room' from Appointments or the Home screen. You'll enter a secure encrypted video session. After the consult, your prescription is sent to your Health Records.",
-  },
+  ...(ENABLE_VIDEO_CONSULTATION
+    ? [{
+      q: "How does video consultation work?",
+      a: "Once your appointment time arrives, tap 'Join Room' from Appointments or the Home screen. You'll enter a secure encrypted video session. After the consult, your prescription is sent to your Health Records.",
+    }]
+    : []),
   {
     q: "Can I book for a family member?",
     a: "Yes. Add family members under Profile → Family Profiles. When booking, select 'Family Member' in the Patient step to book on their behalf.",
@@ -38,7 +43,7 @@ const FAQS: FAQ[] = [
 ];
 
 const TOPICS = [
-  { icon: "📹", label: "Video & Consultations", href: "#" },
+  ...(ENABLE_VIDEO_CONSULTATION ? [{ icon: "📹", label: "Video & Consultations", href: "#" }] : []),
   { icon: "💊", label: "Prescriptions & Medicines", href: "#" },
   { icon: "💳", label: "Payments & Refunds", href: "#" },
   { icon: "🔒", label: "Privacy & Account", href: "#" },

@@ -60,6 +60,10 @@ export const PERMISSIONS = {
   PRO_ACCESS: "pro:access",
   ADMIN_ACCESS: "admin:access",
 
+  // Assistants (doctor-managed)
+  ASSISTANTS_READ: "assistants:read",
+  ASSISTANTS_MANAGE: "assistants:manage",
+
   // Checkout / Payment
   CHECKOUT_CREATE: "checkout:create",
   PAYMENT_READ: "payment:read",
@@ -72,6 +76,11 @@ export const PERMISSIONS = {
   NOTIFICATIONS_READ: "notifications:read",
   NOTIFICATIONS_UPDATE: "notifications:update",
   NOTIFICATIONS_DELETE: "notifications:delete",
+
+  // Favorites (patient bookmarking practitioners)
+  FAVORITES_READ: "favorites:read",
+  FAVORITES_CREATE: "favorites:create",
+  FAVORITES_DELETE: "favorites:delete",
 } as const;
 
 export type Permission = typeof PERMISSIONS[keyof typeof PERMISSIONS];

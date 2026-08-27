@@ -5,6 +5,7 @@ import { apiClient } from "@/shared/api/api-client";
 
 export type AnalyticsData = {
   totalConsultations: number;
+  totalPatients: number;
   completedThisMonth: number;
   totalRevenue: number;
   revenueThisMonth: number;

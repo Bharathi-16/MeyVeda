@@ -1,3 +1,4 @@
+
 import { createClient } from "@/shared/db/supabase.server";
 
 export type PrescriptionItemView = {
@@ -149,6 +150,20 @@ export class PrescriptionRepository {
       throw new Error("Failed to fetch prescriptions from database");
     }
 
+    // Family members have no `users` row (no login), so their phone lives on
+    // family_members instead — look it up by patient_id, same as the owner path.
+    const patientIds = Array.from(new Set((data ?? []).map((r: any) => r.patient?.id).filter(Boolean)));
+    const phoneByPatientId: Record<string, string> = {};
+    if (patientIds.length > 0) {
+      const { data: familyMembers } = await supabase
+        .from("family_members")
+        .select("patient_id, phone")
+        .in("patient_id", patientIds);
+      for (const fm of familyMembers ?? []) {
+        if (fm.patient_id && fm.phone) phoneByPatientId[fm.patient_id] = fm.phone;
+      }
+    }
+
     return (data ?? []).map((row: any) => {
       const name = row.patient?.full_name ?? "Patient";
       const initials = name.split(" ").filter((w: string) => w).map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
@@ -184,7 +199,7 @@ export class PrescriptionRepository {
         patientName: name,
         gender: patientObj.gender || "Unknown",
         age: age || "N/A",
-        phone: (Array.isArray(patientObj.user) ? patientObj.user[0]?.mobile : patientObj.user?.mobile) || "",
+        phone: phoneByPatientId[patientObj.id] || (Array.isArray(patientObj.user) ? patientObj.user[0]?.mobile : patientObj.user?.mobile) || "",
         specialty: "",
         status: row.status ?? "finalized",
         dietaryAdvice: row.dietary_advice ?? "",
@@ -212,11 +227,11 @@ export class PrescriptionRepository {
     });
   }
 
-  static async getPrescriptionOwner(prescriptionId: string): Promise<{ id: string; practitioner_id: string } | null> {
+  static async getPrescriptionOwner(prescriptionId: string): Promise<{ id: string; practitioner_id: string; patient_id: string } | null> {
     const supabase = await createClient();
     const { data, error } = await supabase
       .from("prescriptions")
-      .select("id, practitioner_id")
+      .select("id, practitioner_id, patient_id")
       .eq("id", prescriptionId)
       .maybeSingle();
 

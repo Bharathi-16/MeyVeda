@@ -20,8 +20,9 @@ export class RegistryRepository {
 
     const { data: appointments } = await supabase
       .from("appointments")
-      .select("patient_id, scheduled_date, scheduled_time")
-      .eq("practitioner_id", resolvedPractitionerId);
+      .select("patient_id, scheduled_date, scheduled_time, status")
+      .eq("practitioner_id", resolvedPractitionerId)
+      .neq("status", "cancelled");
 
     const ids = (appointments ?? [])
       .map((a: any) => {
@@ -54,6 +55,7 @@ export class RegistryRepository {
           date_of_birth,
           gender,
           prakriti,
+          blood_group,
           user:users (
             mobile,
             abha_links ( abha_id )
@@ -69,7 +71,8 @@ export class RegistryRepository {
           date_of_birth,
           gender,
           phone,
-          abha_number
+          abha_number,
+          blood_group
         `)
         .in("user_id", patientIdsFilter),
     ]);
@@ -94,9 +97,30 @@ export class RegistryRepository {
           date_of_birth: p.date_of_birth,
           gender: p.gender,
           prakriti: "Vata-Pitta", // default for new profiles
+          blood_group: p.blood_group,
           user: { mobile: p.phone, abha_links: p.abha_number ? [{ abha_id: p.abha_number }] : [] },
         });
       }
+    }
+
+    // Family members have no `users` row (no login), so their phone number
+    // lives on family_members instead — look it up by patient_id so the
+    // directory shows it the same way it does for self-registered patients.
+    // This also identifies which patient rows are dependents (booked under
+    // an account owner) rather than account owners themselves — the caller
+    // uses this flag to show only account owners in the top-level list,
+    // while dependents' full computed data (visits, appointments, etc.)
+    // stays available for lookup when viewed through their owner.
+    const { data: familyMembers } = await supabase
+      .from("family_members")
+      .select("patient_id, phone")
+      .in("patient_id", patientIdsFilter);
+
+    const phoneByPatientId: Record<string, string> = {};
+    const dependentPatientIds = new Set<string>();
+    for (const fm of familyMembers ?? []) {
+      if (fm.patient_id && fm.phone) phoneByPatientId[fm.patient_id] = fm.phone;
+      if (fm.patient_id) dependentPatientIds.add(fm.patient_id);
     }
 
     const patients = Array.from(mergedPatientsMap.values());
@@ -133,6 +157,29 @@ export class RegistryRepository {
       recordsByPatient[r.patient_id].push(r);
     }
 
+    // Fetch active prescriptions (with item counts) to compute medicine counts per patient
+    const { data: prescriptions, error: presError } = await supabase
+      .from("prescriptions")
+      .select("patient_id, status, prescription_items ( id )")
+      .eq("practitioner_id", resolvedPractitionerId)
+      .in("patient_id", patientIdsFilter);
+
+    if (presError) {
+      console.error("[RegistryRepository] Error fetching prescriptions:", presError.message);
+    }
+
+    const activeMedsByPatient: Record<string, number> = {};
+    for (const rx of prescriptions ?? []) {
+      if (rx.status === "cancelled") continue;
+      const itemCount = Array.isArray(rx.prescription_items) ? rx.prescription_items.length : 0;
+      activeMedsByPatient[rx.patient_id] = (activeMedsByPatient[rx.patient_id] ?? 0) + itemCount;
+    }
+
+    // "Last 30 Days" is driven by the appointment's own scheduled date/time
+    // (not whether a consultation record was separately saved for it) —
+    // any non-cancelled appointment already in the past, within 30 days.
+    const thirtyDaysAgoStr = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toLocaleDateString("en-CA");
+
     return patients.map((p: any) => {
       let age = 0;
       if (p.date_of_birth) {
@@ -164,15 +211,6 @@ export class RegistryRepository {
         }
       }
 
-      // Latest visit date & count
-      const visits = patientRecords.filter((r) => r.record_type === "consultation");
-      const lastVisit = visits[0]?.record_date ?? "No visits";
-      let lastVisitDaysAgo = 99;
-      if (visits[0]?.record_date) {
-        const diffTime = Math.abs(new Date().getTime() - new Date(visits[0].record_date).getTime());
-        lastVisitDaysAgo = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      }
-
       const userObj = Array.isArray(p.user) ? p.user[0] : p.user;
       const abhaList = userObj?.abha_links || [];
       const abha = abhaList.length > 0 ? abhaList[0].abha_id : null;
@@ -180,8 +218,34 @@ export class RegistryRepository {
       const patientAppts = appointmentsByPatient[p.id] ?? [];
       const isToday = patientAppts.some((a) => a.scheduled_date === today);
 
-      // Calculate next appointment or follow-up recommendation
-      const futureAppts = patientAppts.filter((a) => a.scheduled_date >= today);
+      // Any non-cancelled appointment already in the past (before today),
+      // scheduled within the last 30 days, counts as an ended/finished visit.
+      const pastAppts = patientAppts
+        .filter((a) => a.scheduled_date < today)
+        .sort((a, b) => new Date(`${b.scheduled_date}T${b.scheduled_time || "00:00:00"}`).getTime() - new Date(`${a.scheduled_date}T${a.scheduled_time || "00:00:00"}`).getTime());
+      const completedVisitLast30Days = pastAppts.some((a) => a.scheduled_date >= thirtyDaysAgoStr);
+
+      // Latest visit date & count — prefer the most recent past appointment
+      // (the same data driving the "Last 30 Days" bucket above) so the card's
+      // displayed "Last Visit" always explains why a patient lands in that tab.
+      // Fall back to filed health-record consultation entries if no appointment exists.
+      const visits = patientRecords.filter((r) => r.record_type === "consultation");
+      // "Update Record" consultations are saved as appointments with status
+      // "completed" (see consultation.repo.ts) rather than as health_records
+      // rows, so prefer that count — falls back to health_records for older data.
+      const completedVisitsCount = patientAppts.filter((a) => a.status === "completed").length;
+      const totalVisits = completedVisitsCount > 0 ? completedVisitsCount : visits.length;
+      const lastVisit = pastAppts[0]?.scheduled_date ?? visits[0]?.record_date ?? "No visits";
+      let lastVisitDaysAgo = 99;
+      if (lastVisit !== "No visits") {
+        const diffTime = Math.abs(new Date().getTime() - new Date(lastVisit).getTime());
+        lastVisitDaysAgo = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      }
+
+      // Calculate next appointment or follow-up recommendation.
+      // Strictly after today — today's own appointment belongs only in
+      // "Today's Queue", not also duplicated into "Follow-up Due".
+      const futureAppts = patientAppts.filter((a) => a.scheduled_date > today);
       futureAppts.sort((a, b) => {
         const dA = new Date(`${a.scheduled_date}T${a.scheduled_time || "00:00:00"}`).getTime();
         const dB = new Date(`${b.scheduled_date}T${b.scheduled_time || "00:00:00"}`).getTime();
@@ -230,27 +294,62 @@ export class RegistryRepository {
         }
       }
 
+      // Non-completed appointments (today, future, or an unattended past slot),
+      // shown in the Patient Search queue. Once a consultation is completed for
+      // one, it drops out of this list and shows up in Prescriptions instead.
+      const upcomingAppointments = patientAppts
+        .filter((a) => a.status !== "completed")
+        .sort((a, b) => new Date(`${a.scheduled_date}T${a.scheduled_time || "00:00:00"}`).getTime() - new Date(`${b.scheduled_date}T${b.scheduled_time || "00:00:00"}`).getTime())
+        .map((a) => {
+          const dateObj = new Date(`${a.scheduled_date}T00:00:00`);
+          let displayTime = a.scheduled_time || "";
+          if (displayTime) {
+            const [hr, min] = displayTime.split(":");
+            let h = parseInt(hr, 10);
+            const ampm = h >= 12 ? "PM" : "AM";
+            h = h % 12 || 12;
+            displayTime = `${h}:${min} ${ampm}`;
+          }
+          return {
+            dateRaw: a.scheduled_date,
+            date: dateObj.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
+            day: dateObj.toLocaleDateString("en-IN", { weekday: "long" }),
+            time: displayTime,
+            // Which tab (Today/Upcoming/Past) this appointment sits in — purely
+            // date-based, so a same-day appointment stays under "Today" even
+            // after it's been auto-marked missed.
+            status: a.scheduled_date === today ? "today" : a.scheduled_date > today ? "upcoming" : "missed",
+            // Whether the doctor actually missed it (DB enum value is
+            // "no_show") — checked separately so today's missed slots still
+            // show a "Missed" badge instead of just "Today".
+            isMissed: a.status === "no_show" || a.status === "missed",
+          };
+        });
+
       return {
         id: p.id,
+        isFamilyMember: dependentPatientIds.has(p.id),
         name: p.full_name || "Unknown",
         age,
         gender: p.gender || "Unknown",
-        phone: userObj?.mobile || "",
+        phone: phoneByPatientId[p.id] || userObj?.mobile || "",
         abha,
-        bloodGroup: "O+",
+        bloodGroup: p.blood_group || "Not Recorded",
         prakriti: p.prakriti || "Unknown",
         lastVisit: lastVisit !== "No visits" ? new Date(lastVisit).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "No visits",
         lastVisitDaysAgo,
+        completedVisitLast30Days,
         nextFollowUp,
         followUpDue,
         isToday,
         conditions: problems.map((pr: any) => pr.name).join(" · ") || "No recorded conditions",
         systems: ["Ayurveda"],
-        totalVisits: visits.length,
+        totalVisits,
         problems,
         allergySummary: "No known allergies",
-        activeMeds: 0,
+        activeMeds: activeMedsByPatient[p.id] ?? 0,
         vitals,
+        upcomingAppointments,
       };
     });
   }

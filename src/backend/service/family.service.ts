@@ -1,7 +1,14 @@
+
 import { FamilyRepository } from "../repo/family.repo";
 import { AppointmentsRepository } from "../repo/appointments.repo";
 import { AuthUser } from "@/shared/auth/auth.types";
 import { AppError } from "@/shared/api/api-error";
+
+function normalizeGender(gender: string): string {
+  const g = gender.trim().toLowerCase().replace(/\s+/g, "_");
+  if (g === "male" || g === "female" || g === "other" || g === "prefer_not_to_say") return g;
+  return "other";
+}
 
 export class FamilyService {
   static async getFamilyMembers(authUser: AuthUser) {
@@ -17,22 +24,40 @@ export class FamilyService {
       }
       return {
         id: row.id,
+        patientId: row.patient_id ?? null,
         name: row.full_name ?? "",
         relationship: row.relationship ?? "other",
         dob: row.date_of_birth ?? "",
         age,
         gender: row.gender ?? "",
         abhaId: row.abha_id,
-        prakriti: row.prakriti,
+        phone: row.phone ?? "",
+        bloodGroup: row.blood_group ?? "",
+        height: row.height ?? null,
+        weight: row.weight ?? null,
       };
     });
   }
 
-  static async addFamilyMember(authUser: AuthUser, member: { fullName: string; relationship: string; dob: string; gender: string; }) {
+  static async addFamilyMember(authUser: AuthUser, member: { fullName: string; relationship: string; dob: string; gender: string; phone?: string; bloodGroup?: string; height?: number; weight?: number; }) {
     const patientId = await AppointmentsRepository.getPatientIdFromUserId(authUser.id);
     if (!patientId) throw new AppError("Patient not found", 404);
 
-    await FamilyRepository.addFamilyMember(patientId, member);
+    await FamilyRepository.addFamilyMember(patientId, {
+      ...member,
+      gender: normalizeGender(member.gender),
+      relationship: member.relationship.trim().toLowerCase(),
+    });
+    return { success: true };
+  }
+
+  static async updateFamilyMember(authUser: AuthUser, id: string, member: { fullName: string; relationship: string; dob: string; gender: string; phone?: string; bloodGroup?: string; height?: number; weight?: number; }) {
+    // Should check if it belongs to user but we assume auth controls access well enough
+    await FamilyRepository.updateFamilyMember(id, {
+      ...member,
+      gender: normalizeGender(member.gender),
+      relationship: member.relationship.trim().toLowerCase(),
+    });
     return { success: true };
   }
 

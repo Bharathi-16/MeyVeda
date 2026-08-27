@@ -28,6 +28,7 @@ export type FollowUpRow = {
 
 export type AnalyticsData = {
   totalConsultations: number;
+  totalPatients: number;
   completedThisMonth: number;
   totalRevenue: number;
   revenueThisMonth: number;
@@ -41,6 +42,7 @@ export type QueuePatient = {
   id: string;
   appointmentId: string;
   name: string;
+  relationship?: string | null;
   age: number;
   time: string;
   mode: "video" | "clinic";

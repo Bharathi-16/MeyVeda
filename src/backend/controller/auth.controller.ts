@@ -8,6 +8,27 @@ import { successResponse, errorResponse } from "@/lib/utils/response";
 import { cookies } from "next/headers";
 
 /**
+ * GET /api/auth/check-account?email=
+ * Lightweight existence check so the onboarding email step can offer
+ * "Sign In" instead of "Continue" for an email that's already registered.
+ */
+export async function checkAccount(req: NextRequest) {
+  const email = req.nextUrl.searchParams.get("email");
+  if (!email) {
+    return errorResponse("Email is required", 400);
+  }
+
+  const supabase: any = createClient();
+  const { data } = await supabase
+    .from("users")
+    .select("id")
+    .eq("email", email.toLowerCase())
+    .maybeSingle();
+
+  return successResponse({ exists: !!data });
+}
+
+/**
  * POST /api/auth/send-otp
  * Triggers the Supabase Edge Function to send an OTP via Email/SMS.
  */
@@ -30,8 +51,35 @@ export async function sendOtp(req: NextRequest) {
     return successResponse({ success: true, message: "OTP sent successfully" });
   }
 
-  // Fallback: Directly insert into email_otps table if Edge function fails or is not deployed
-  console.log("[sendOtp] Edge function not available or failed. Falling back to database insertion.");
+  console.error("[sendOtp] Edge function invoke reported an error:", error ?? data?.error);
+
+  // The invoke() call can report an error (timeout, transient network issue) even when the
+  // Edge Function actually completed and emailed the OTP. Check for a row created in the last
+  // few seconds before assuming nothing happened — otherwise we'd insert a second, un-emailed
+  // OTP that shadows the one the user was actually sent (verify-otp reads the newest row).
+  const recentCutoff = new Date(Date.now() - 10_000).toISOString();
+  const { data: recentRows } = await supabase
+    .from("email_otps")
+    .select("id")
+    .eq("email", email.toLowerCase())
+    .eq("purpose", "email_validation")
+    .gt("created_at", recentCutoff)
+    .limit(1);
+
+  if (recentRows && recentRows.length > 0) {
+    return successResponse({ success: true, message: "OTP sent successfully" });
+  }
+
+  const isDevMode = !process.env.RESEND_API_KEY || process.env.RESEND_API_KEY === "YOUR_RESEND_API_KEY";
+
+  if (!isDevMode) {
+    // No SMTP credentials are configured in this app runtime, so we cannot actually deliver an
+    // email here — returning "success" without sending one would silently strand the user.
+    return errorResponse("Unable to send OTP. Please try again.", 502);
+  }
+
+  // Dev-only fallback: insert a devOtp so local testing works without the Edge Function deployed.
+  console.log("[sendOtp] Edge function unavailable — using dev fallback (no email will be sent).");
   const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
@@ -47,12 +95,11 @@ export async function sendOtp(req: NextRequest) {
     return errorResponse("Failed to send OTP", 500);
   }
 
-  const isDevMode = !process.env.RESEND_API_KEY || process.env.RESEND_API_KEY === "YOUR_RESEND_API_KEY";
-
   return successResponse({
     success: true,
     message: "OTP sent successfully",
-    ...(isDevMode ? { devOtp: otpCode, note: "Default dev OTP is '123456' or check devOtp" } : {}),
+    devOtp: otpCode,
+    note: "Default dev OTP is '123456' or check devOtp",
   });
 }
 
@@ -135,22 +182,60 @@ export async function login(req: NextRequest) {
     });
   }
 
-  // Resolve display name based on role
+  // Resolve display name based on role. A `users` row can exist without its
+  // matching profile row (e.g. onboarding was interrupted partway through) —
+  // in that case this account isn't actually usable yet, so treat it as a
+  // new signup rather than routing it into a dashboard with no profile data.
   let name = "Unknown";
+  let assistantStatus: string | undefined;
+  let linkedDoctorName: string | undefined;
+  let hasProfile = false;
+
   if (dbUser.role === "practitioner") {
     const { data: prac } = await supabase
       .from("practitioners")
       .select("full_name")
       .eq("user_id", dbUser.id)
       .maybeSingle();
-    if (prac) name = prac.full_name;
+    if (prac) {
+      name = prac.full_name;
+      hasProfile = true;
+    }
   } else if (dbUser.role === "patient") {
     const { data: pat } = await supabase
       .from("patients")
       .select("full_name")
       .eq("user_id", dbUser.id)
       .maybeSingle();
-    if (pat) name = pat.full_name;
+    if (pat) {
+      name = pat.full_name;
+      hasProfile = true;
+    }
+  } else if (dbUser.role === "assistant") {
+    const { data: assistant } = await supabase
+      .from("assistants")
+      .select("full_name, status, practitioner:practitioners ( full_name )")
+      .eq("user_id", dbUser.id)
+      .maybeSingle();
+    if (assistant) {
+      name = assistant.full_name;
+      assistantStatus = assistant.status;
+      const practitioner = Array.isArray(assistant.practitioner)
+        ? assistant.practitioner[0]
+        : assistant.practitioner;
+      linkedDoctorName = practitioner?.full_name;
+      hasProfile = true;
+    }
+  } else {
+    // Non-profile roles (admin, super_admin, ...) have no per-role table to check.
+    hasProfile = true;
+  }
+
+  if (!hasProfile) {
+    return successResponse({
+      returning: false,
+      verified: true,
+    });
   }
 
   // Sign Tokens
@@ -195,6 +280,8 @@ export async function login(req: NextRequest) {
       name,
       abhaLinked: true,
       email: dbUser.email,
+      assistantStatus,
+      linkedDoctorName,
     },
   });
 }

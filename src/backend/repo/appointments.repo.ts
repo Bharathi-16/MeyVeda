@@ -41,12 +41,16 @@ export type AppointmentDbRow = {
         full_name: string | null;
         specializations: string[] | null;
         disciplines: string[] | null;
+        base_video_fee: number | null;
+        base_clinic_fee: number | null;
       }
     | {
         id: string;
         full_name: string | null;
         specializations: string[] | null;
         disciplines: string[] | null;
+        base_video_fee: number | null;
+        base_clinic_fee: number | null;
       }[]
     | null;
 
@@ -133,7 +137,9 @@ const APPOINTMENT_SELECT = `
     id,
     full_name,
     specializations,
-    disciplines
+    disciplines,
+    base_video_fee,
+    base_clinic_fee
   ),
   consultation:consultations (
     id,
@@ -231,17 +237,41 @@ export class AppointmentsRepository {
   }
 
   /**
-   * Fetch appointments belonging to a patient.
+   * Fetch appointments belonging to a patient, including appointments
+   * booked for that patient's family members (dependents share the
+   * account owner's portal view but have their own patients.id).
    */
   static async getAppointmentsForPatient(
     patientId: string,
   ): Promise<AppointmentDbRow[]> {
     const supabase = await createClient();
 
+    const { data: familyMembers, error: familyMembersError } = await supabase
+      .from("family_members")
+      .select("patient_id")
+      .eq("owner_patient_id", patientId)
+      .eq("is_active", true);
+
+    if (familyMembersError) {
+      console.error(
+        "[AppointmentsRepository] Error resolving family members:",
+        familyMembersError.message,
+      );
+
+      throw new Error(
+        "Database error while resolving family member profiles",
+      );
+    }
+
+    const visiblePatientIds = [
+      patientId,
+      ...(familyMembers ?? []).map((member) => member.patient_id),
+    ];
+
     const { data, error } = await supabase
       .from("appointments")
       .select(APPOINTMENT_SELECT)
-      .eq("patient_id", patientId)
+      .in("patient_id", visiblePatientIds)
       .order("scheduled_date", { ascending: false })
       .order("scheduled_time", { ascending: false });
 
@@ -408,6 +438,127 @@ export class AppointmentsRepository {
         "Appointment was not found or is already cancelled",
       );
     }
+  }
+
+  /**
+   * Notify the practitioner that a patient cancelled their appointment.
+   * Best-effort — failures are logged but never block the cancellation itself.
+   */
+  static async notifyPractitionerOfCancellation(
+    appointmentId: string,
+  ): Promise<void> {
+    const supabase = await createClient();
+
+    const { data: appt, error } = await supabase
+      .from("appointments")
+      .select(`
+        scheduled_date,
+        scheduled_time,
+        patients ( full_name ),
+        practitioners ( user_id )
+      `)
+      .eq("id", appointmentId)
+      .maybeSingle();
+
+    if (error || !appt) {
+      console.error(
+        "[AppointmentsRepository] Error fetching appointment for cancellation notice:",
+        error?.message,
+      );
+      return;
+    }
+
+    const practitioner = Array.isArray(appt.practitioners) ? appt.practitioners[0] : appt.practitioners;
+    const practitionerUserId = (practitioner as { user_id?: string } | null)?.user_id;
+    if (!practitionerUserId) return;
+
+    const patientRow = Array.isArray(appt.patients) ? appt.patients[0] : appt.patients;
+    const patientName = (patientRow as { full_name?: string } | null)?.full_name || "A patient";
+
+    const formattedDate = appt.scheduled_date
+      ? new Date(`${appt.scheduled_date}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })
+      : "";
+    const timeStr = appt.scheduled_time || "";
+    const [hr, min] = timeStr.split(":");
+    let formattedTime = timeStr;
+    if (hr && min) {
+      const h = parseInt(hr, 10);
+      const period = h >= 12 ? "PM" : "AM";
+      const h12 = h % 12 || 12;
+      formattedTime = `${h12}:${min} ${period}`;
+    }
+
+    const { error: notifError } = await supabase.from("notifications").insert({
+      user_id: practitionerUserId,
+      title: "Appointment Cancelled",
+      body: `${patientName} cancelled their appointment scheduled on ${formattedDate} at ${formattedTime}.`,
+      type: "appointment_cancelled",
+      is_read: false,
+    });
+
+    if (notifError) {
+      console.error(
+        "[AppointmentsRepository] Error inserting cancellation notification:",
+        notifError.message,
+      );
+    }
+  }
+
+  /**
+   * Fetch the data needed to compose a booking/cancellation email for an
+   * appointment: patient email/name, practitioner name, schedule and fee.
+   */
+  static async getAppointmentEmailDetails(appointmentId: string): Promise<{
+    patientEmail: string;
+    patientName: string;
+    practitionerName: string;
+    scheduledDate: string;
+    scheduledTime: string;
+    mode: string;
+    feePaise: number | null;
+  } | null> {
+    const supabase = await createClient();
+
+    const { data, error } = await supabase
+      .from("appointments")
+      .select(`
+        mode,
+        scheduled_date,
+        scheduled_time,
+        patient:patients ( full_name, user:users ( email ) ),
+        practitioner:practitioners ( full_name ),
+        slot:slots ( fee )
+      `)
+      .eq("id", appointmentId)
+      .maybeSingle();
+
+    if (error || !data) {
+      console.error(
+        "[AppointmentsRepository] Error fetching appointment email details:",
+        error?.message,
+      );
+      return null;
+    }
+
+    const patient = Array.isArray(data.patient) ? data.patient[0] : data.patient;
+    const practitioner = Array.isArray(data.practitioner) ? data.practitioner[0] : data.practitioner;
+    const slot = Array.isArray(data.slot) ? data.slot[0] : data.slot;
+    const patientUser = patient ? (Array.isArray(patient.user) ? patient.user[0] : patient.user) : null;
+
+    const patientEmail = patientUser?.email;
+    if (!patientEmail) {
+      return null;
+    }
+
+    return {
+      patientEmail,
+      patientName: patient?.full_name || "Patient",
+      practitionerName: practitioner?.full_name || "Practitioner",
+      scheduledDate: data.scheduled_date,
+      scheduledTime: data.scheduled_time,
+      mode: data.mode,
+      feePaise: slot?.fee ?? null,
+    };
   }
 
   /**

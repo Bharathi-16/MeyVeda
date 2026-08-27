@@ -78,7 +78,8 @@ function isDoctorOrPractitioner(
 ): boolean {
   return (
     auth.role === "doctor" ||
-    auth.role === "practitioner"
+    auth.role === "practitioner" ||
+    auth.role === "assistant"
   );
 }
 

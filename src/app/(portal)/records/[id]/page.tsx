@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ConsultationService } from "@/backend/service/consultation.service";
 import { getAuthUserFromCookies } from "@/shared/auth/get-auth-user-server";
+import { InvoiceDialog } from "@/components/consultation-report/InvoiceDialog";
 import { ArrowLeft, User, Activity, FileText, Pill, Stethoscope, Download, FileUp, Clock, Calendar } from "lucide-react";
 
 export default async function RecordDetailsPage({ params }: { params: Promise<{ id: string }> }) {
@@ -17,15 +18,15 @@ export default async function RecordDetailsPage({ params }: { params: Promise<{ 
   const prescriptions = Array.isArray(data.prescriptions) ? data.prescriptions[0] || {} : data.prescriptions || {};
   const patient = (data.patients as any) || {};
   const practitioner = (data.practitioners as any) || {};
-  
+
   let chiefComplaints: string[] = [];
-  try { chiefComplaints = JSON.parse(emr.chief_complaint || "[]"); } catch(e){}
-  
+  try { chiefComplaints = JSON.parse(emr.chief_complaint || "[]"); } catch (e) { }
+
   let assessment: any = {};
-  try { assessment = JSON.parse(emr.assessment || "{}"); } catch(e){}
+  try { assessment = JSON.parse(emr.assessment || "{}"); } catch (e) { }
 
   let findings: any = {};
-  try { findings = JSON.parse(emr.objective_findings || "{}"); } catch(e){}
+  try { findings = JSON.parse(emr.objective_findings || "{}"); } catch (e) { }
 
   const vitals = findings.vitals || {};
   const rxItems = prescriptions.prescription_items || [];
@@ -45,7 +46,7 @@ export default async function RecordDetailsPage({ params }: { params: Promise<{ 
             <ArrowLeft className="w-4 h-4 mr-1" />
             Back to Health Records
           </Link>
-          
+
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
             <div>
               <h1 className="text-2xl font-bold text-gray-900 tracking-tight flex items-center gap-3">
@@ -54,7 +55,7 @@ export default async function RecordDetailsPage({ params }: { params: Promise<{ 
               <p className="text-sm text-gray-500 mt-1">
                 Record ID: {id.split('-')[0].toUpperCase()} • Saved on {new Date(data.created_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
               </p>
-              
+
               <div className="flex flex-wrap gap-x-6 gap-y-2 mt-4 text-sm font-medium text-gray-600">
                 <p>Patient: <span className="text-gray-900">{patient.full_name || "N/A"}</span></p>
                 <p>Age/Gender: <span className="text-gray-900">{patient.age || "N/A"}y / {patient.gender || "N/A"}</span></p>
@@ -63,12 +64,20 @@ export default async function RecordDetailsPage({ params }: { params: Promise<{ 
               </div>
             </div>
 
-            <Link href={`/api/consultations/${id}/pdf`} target="_blank">
-              <button className="flex flex-shrink-0 items-center gap-2 px-5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-sm font-semibold rounded-xl transition-all border border-indigo-200">
-                <Download className="w-4 h-4" />
-                Download PDF
-              </button>
-            </Link>
+            <div className="flex flex-shrink-0 items-center gap-3">
+              <InvoiceDialog
+                consultationId={id}
+                patientName={patient.full_name || "N/A"}
+                doctorName={practitioner.full_name || "N/A"}
+                invoiceDate={new Date(data.created_at).toLocaleDateString('en-IN', { dateStyle: 'medium' })}
+              />
+              <Link href={`/api/consultations/${id}/pdf`} target="_blank">
+                <button className="flex flex-shrink-0 items-center gap-2 px-5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-sm font-semibold rounded-xl transition-all border border-indigo-200">
+                  <Download className="w-4 h-4" />
+                  Download PDF
+                </button>
+              </Link>
+            </div>
           </div>
         </div>
 
@@ -76,7 +85,7 @@ export default async function RecordDetailsPage({ params }: { params: Promise<{ 
           {/* Section 1: Practitioner Information */}
           <section className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 relative overflow-hidden">
             <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-50 rounded-full blur-3xl -mr-20 -mt-20 opacity-60 pointer-events-none"></div>
-            
+
             <h2 className="text-lg font-semibold text-gray-900 mb-5 flex items-center gap-2 relative z-10">
               <User className="w-5 h-5 text-indigo-500" />
               Treating Practitioner
@@ -94,7 +103,7 @@ export default async function RecordDetailsPage({ params }: { params: Promise<{ 
                   <p className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> {new Date(data.created_at).toLocaleDateString('en-IN', { dateStyle: 'medium' })}</p>
                 </div>
               </div>
-              
+
               <div className="flex-shrink-0">
                 <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-sm font-semibold uppercase tracking-wider">
                   <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
@@ -111,7 +120,7 @@ export default async function RecordDetailsPage({ params }: { params: Promise<{ 
                 <Stethoscope className="w-5 h-5 text-indigo-500" />
                 Consultation Details
               </h2>
-              
+
               <Link href={`/booking?doctor=${data.practitioner_id}`}>
                 <button className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-xl shadow-sm shadow-indigo-600/20 transition-all">
                   <Calendar className="w-4 h-4" />
@@ -260,10 +269,10 @@ export default async function RecordDetailsPage({ params }: { params: Promise<{ 
               Additional Instructions & Notes
             </h2>
             {rxNotes ? (
-              <div 
+              <div
                 className="prose prose-sm max-w-none text-gray-700 bg-amber-50/30 p-5 rounded-xl border border-amber-100/50
                   [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:mb-1 [&_p]:mb-3 last:[&_p]:mb-0"
-                dangerouslySetInnerHTML={{ __html: rxNotes }} 
+                dangerouslySetInnerHTML={{ __html: rxNotes }}
               />
             ) : (
               <p className="text-sm text-gray-500 italic">No additional notes provided.</p>

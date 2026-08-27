@@ -21,35 +21,35 @@ export class EMRService {
     }));
   }
 
-  static async savePatientVitals(authUser: AuthUser, vitals: any) {
+  static async savePatientVitals(authUser: AuthUser, vitals: any): Promise<{ patientId: string }> {
     const patientId = await AppointmentsRepository.getPatientIdFromUserId(authUser.id);
     if (!patientId) throw new AppError("Patient not found", 404);
 
     await EMRRepository.savePatientVitals(patientId, vitals);
-    return { success: true };
+    return { patientId };
   }
 
-  static async addPatientProblem(authUser: AuthUser, problem: { code: string; name: string; status: "active" | "controlled" | "resolved" }) {
+  static async addPatientProblem(authUser: AuthUser, problem: { code: string; name: string; status: "active" | "controlled" | "resolved" }): Promise<{ patientId: string }> {
     const patientId = await AppointmentsRepository.getPatientIdFromUserId(authUser.id);
     if (!patientId) throw new AppError("Patient not found", 404);
 
     await EMRRepository.addPatientProblem(patientId, problem);
-    return { success: true };
+    return { patientId };
   }
 
-  static async removePatientProblem(authUser: AuthUser, code: string) {
+  static async removePatientProblem(authUser: AuthUser, code: string): Promise<{ patientId: string }> {
     const patientId = await AppointmentsRepository.getPatientIdFromUserId(authUser.id);
     if (!patientId) throw new AppError("Patient not found", 404);
 
     await EMRRepository.removePatientProblem(patientId, code);
-    return { success: true };
+    return { patientId };
   }
 
-  static async savePatientNote(authUser: AuthUser, noteText: string) {
+  static async savePatientNote(authUser: AuthUser, noteText: string): Promise<{ patientId: string }> {
     const patientId = await AppointmentsRepository.getPatientIdFromUserId(authUser.id);
     if (!patientId) throw new AppError("Patient not found", 404);
 
     await EMRRepository.savePatientNote(patientId, noteText);
-    return { success: true };
+    return { patientId };
   }
 }

@@ -1,4 +1,5 @@
 import { createClient } from "@/shared/db/supabase.server";
+import { resolveActiveFeeRupees } from "@/lib/fee";
 
 export type SaveDoctorProfileInput = {
   email: string;
@@ -6,27 +7,31 @@ export type SaveDoctorProfileInput = {
   fullName: string;
   photoUrl?: string;
   signatureUrl?: string;
-  consultationFee: number;
-  specializations: string[];
-  languages: string[];
-  degreeUrl: string;
-  registrationCertUrl: string;
+  consultationFee?: number;
+  specializations?: string[];
+  languages?: string[];
+  qualifications?: string[];
+  degreeUrl?: string;
+  registrationCertUrl?: string;
   hprId?: string;
   dateOfBirth?: string;
   gender?: string;
   bloodGroup?: string;
 };
 
+export type EmergencyContact = { name: string; phone: string };
+
 export type SavePatientProfileInput = {
   email: string;
   fullName: string;
-  dateOfBirth: string;
-  gender: string;
+  dateOfBirth?: string;
+  gender?: string;
+  bloodGroup?: string;
   phone: string;
   address?: string;
   abhaNumber?: string;
-  emergencyContactName?: string;
-  emergencyContactPhone?: string;
+  ayushNumber?: string;
+  emergencyContacts?: EmergencyContact[];
   allergies?: string[];
   chronicConditions?: string[];
   currentMedications?: string[];
@@ -50,7 +55,7 @@ export class OnboardingRepository {
     // Return in compatible shape expected by frontend
     return {
       ...data,
-      consultation_fee: Math.round((data.base_video_fee ?? 0) / 100),
+      consultation_fee: resolveActiveFeeRupees(data.base_video_fee, data.base_clinic_fee),
       is_active: data.verification_status === "verified",
       verifications: [
         {
@@ -90,28 +95,38 @@ export class OnboardingRepository {
       await supabase.from("users").update({ mobile: p.phone }).eq("id", userId);
     }
 
-    // 2. Upsert directly into practitioners table
+    // 2. Upsert directly into practitioners table. blood_group is no longer
+    // collected on the doctor profile form — only touch it if this caller
+    // actually sent a value, so an existing one (set some other way) is
+    // never silently wiped by a routine profile save.
+    const practitionerRow: Record<string, unknown> = {
+      user_id: userId,
+      full_name: p.fullName,
+      photo_url: p.photoUrl || null,
+      signature_url: p.signatureUrl || null,
+      degree_url: p.degreeUrl || null,
+      registration_cert_url: p.registrationCertUrl || null,
+      hpr_id: p.hprId || null,
+      date_of_birth: p.dateOfBirth || null,
+      gender: p.gender || null,
+      specializations: p.specializations || [],
+      disciplines: ["Ayurveda"],
+      languages: p.languages || [],
+      qualifications: p.qualifications && p.qualifications.length ? p.qualifications : ["BAMS"],
+      // Onboarding/profile-completion only ever collects one generic fee (there's no
+      // separate video/clinic input while video consultations are feature-flagged off),
+      // so mirror it into both columns. The Availability page is the one place that
+      // later splits these into distinct video/clinic amounts.
+      base_video_fee: (p.consultationFee || 0) * 100, // paise
+      base_clinic_fee: (p.consultationFee || 0) * 100, // paise
+      verification_status: "pending",
+    };
+    if (p.bloodGroup !== undefined) practitionerRow.blood_group = p.bloodGroup || null;
+
     const { error: pracErr } = await supabase
       .from("practitioners")
       .upsert(
-        {
-          user_id: userId,
-          full_name: p.fullName,
-          photo_url: p.photoUrl || null,
-          signature_url: p.signatureUrl || null,
-          degree_url: p.degreeUrl,
-          registration_cert_url: p.registrationCertUrl,
-          hpr_id: p.hprId || null,
-          date_of_birth: p.dateOfBirth || null,
-          gender: p.gender || null,
-          blood_group: p.bloodGroup || null,
-          specializations: p.specializations,
-          disciplines: ["Ayurveda"],
-          languages: p.languages,
-          qualifications: ["BAMS"],
-          base_video_fee: (p.consultationFee || 0) * 100, // paise
-          verification_status: "pending",
-        },
+        practitionerRow,
         { onConflict: "user_id" }
       );
 
@@ -129,7 +144,7 @@ export class OnboardingRepository {
       .from("patients")
       .select(`
         *,
-        family_members:patient_family_members (*)
+        family_members!owner_patient_id (*)
       `)
       .eq("user_id", userId)
       .maybeSingle();
@@ -166,29 +181,58 @@ export class OnboardingRepository {
       .update({ role: "patient", abha_number: p.abhaNumber || null, mobile: p.phone || null })
       .eq("id", userId);
 
-    // 2. Upsert patient profile
-    const { error } = await supabase.from("patients").upsert(
-      {
-        user_id: userId,
-        full_name: p.fullName,
-        date_of_birth: p.dateOfBirth,
-        gender: p.gender,
-        address: p.address || null,
-        abha_number: p.abhaNumber || null,
-        emergency_contact_name: p.emergencyContactName || null,
-        emergency_contact_phone: p.emergencyContactPhone || null,
-        allergies: p.allergies || [],
-        chronic_conditions: p.chronicConditions || [],
-        current_medications: p.currentMedications || [],
-      },
-      { onConflict: "user_id" }
-    );
+    // 2. Upsert patient profile. Only fields this caller actually provided are
+    // included — omitting a key (rather than sending an empty/default value)
+    // means an existing value already saved for that field is left untouched,
+    // so e.g. saving from the Create Profile form (which no longer collects
+    // clinical details) can never wipe out allergies/conditions/medications
+    // that were captured elsewhere.
+    const patientRow: Record<string, unknown> = {
+      user_id: userId,
+      full_name: p.fullName,
+      // date_of_birth and gender are NOT NULL in the patients table. The quick
+      // onboarding flow only collects name + phone, so seed sentinel placeholders
+      // here — neither is a value real forms ever submit, so they're safe to
+      // detect and hide until Profile → Create Profile fills in the real ones.
+      date_of_birth: p.dateOfBirth || "1970-01-01",
+      gender: p.gender || "prefer_not_to_say",
+    };
+    if (p.bloodGroup !== undefined) patientRow.blood_group = p.bloodGroup || null;
+    if (p.address !== undefined) patientRow.address = p.address || null;
+    if (p.abhaNumber !== undefined) patientRow.abha_number = p.abhaNumber || null;
+    if (p.ayushNumber !== undefined) patientRow.ayush_number = p.ayushNumber || null;
+    if (p.emergencyContacts !== undefined) patientRow.emergency_contacts = p.emergencyContacts;
+    if (p.allergies !== undefined) patientRow.allergies = p.allergies;
+    if (p.chronicConditions !== undefined) patientRow.chronic_conditions = p.chronicConditions;
+    if (p.currentMedications !== undefined) patientRow.current_medications = p.currentMedications;
+
+    // emergency_contacts and ayush_number are recent additions — if either
+    // hasn't been migrated onto this database yet, PostgREST reports a
+    // schema-cache miss naming the missing column. Retry with that one
+    // column stripped so the rest of the profile (DOB/gender/blood group/
+    // address, all NOT NULL-critical or otherwise required) still saves
+    // instead of the whole request failing on one optional field.
+    let row = patientRow;
+    let error: { message: string } | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      ({ error } = await supabase.from("patients").upsert(row, { onConflict: "user_id" }));
+      if (!error) break;
+
+      const missingColumn = ["emergency_contacts", "ayush_number"].find(
+        (col) => error!.message?.includes(col) && col in row
+      );
+      if (!missingColumn) break;
+
+      console.warn(`[OnboardingRepository] ${missingColumn} column missing — retrying without it`);
+      const { [missingColumn]: _omit, ...rest } = row;
+      row = rest;
+    }
 
     if (error) {
       console.error("[OnboardingRepository] Error saving patient profile:", error.message);
       throw error;
     }
-    
+
     return userId;
   }
 
@@ -208,8 +252,10 @@ export class OnboardingRepository {
         verification_status,
         rejection_reason,
         base_video_fee,
+        base_clinic_fee,
         specializations,
         languages,
+        qualifications,
         created_at,
         user:users!practitioners_user_id_fkey (
           email,
@@ -238,12 +284,39 @@ export class OnboardingRepository {
         full_name: row.full_name,
         photo_url: row.photo_url,
         signature_url: row.signature_url,
-        consultation_fee: Math.round((row.base_video_fee ?? 0) / 100),
+        consultation_fee: resolveActiveFeeRupees(row.base_video_fee, row.base_clinic_fee),
         specializations: row.specializations ?? [],
         languages: row.languages ?? [],
+        qualifications: row.qualifications ?? [],
         user: row.user,
       },
     }));
+  }
+
+  static async getDoctorRowForVerification(doctorId: string): Promise<any | null> {
+    const supabase: any = createClient();
+    const { data, error } = await supabase
+      .from("practitioners")
+      .select(`
+        id,
+        full_name,
+        qualifications,
+        specializations,
+        languages,
+        base_video_fee,
+        base_clinic_fee,
+        degree_url,
+        registration_cert_url,
+        user:users!practitioners_user_id_fkey ( mobile )
+      `)
+      .eq("id", doctorId)
+      .maybeSingle();
+
+    if (error) {
+      console.error("[OnboardingRepository] Error loading doctor row for verification:", error.message);
+      return null;
+    }
+    return data;
   }
 
   static async verifyDoctor(

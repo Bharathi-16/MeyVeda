@@ -4,36 +4,23 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
-import { createClient } from "@/lib/supabase/client";
 import { toast } from "react-hot-toast";
-import { Upload, Shield, Award, User, Heart, AlertCircle, FileText, CheckCircle } from "lucide-react";
+import { Shield, AlertCircle, Stethoscope, HeartPulse, Check, UserCog } from "lucide-react";
 
 type Step =
   | "welcome"
   | "phone"
   | "otp"
-  | "role"
-  | "abha"
-  | "patient-intake"
-  | "doctor-intake"
-  | "doctor-documents"
-  | "success";
+  | "role";
 
 type Flow = "new" | "returning";
 
-const AYUSH_QUALIFICATIONS = ["BAMS", "BHMS", "BUMS", "BNYS", "BSMS", "MD (Ayu)", "MS (Ayu)", "PhD"];
-const AYUSH_SPECIALTIES = [
-  "Kayachikitsa",
-  "Panchakarma",
-  "Shalya Tantra",
-  "Shalakya Tantra",
-  "Kaumarabhritya",
-  "Prasuti-Striroga",
-  "Agada Tantra",
-  "Rasayana-Vajikarana",
-];
-
-const LANGUAGES = ["Hindi", "English", "Tamil", "Telugu", "Kannada", "Malayalam", "Marathi", "Bengali"];
+type DoctorSearchResult = {
+  id: string;
+  fullName: string;
+  email: string;
+  specializations: string[];
+};
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -44,40 +31,23 @@ export default function OnboardingPage() {
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [resendTimer, setResendTimer] = useState(300);
-  const [role, setRole] = useState<"patient" | "doctor" | null>(null);
+  const [role, setRole] = useState<"patient" | "doctor" | "assistant" | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [doctorShowValidation, setDoctorShowValidation] = useState(false);
+  const [accountExists, setAccountExists] = useState(false);
 
   // Common intake
   const [fullName, setFullName] = useState("");
-  const [dob, setDob] = useState("");
-  const [gender, setGender] = useState<"male" | "female" | "other" | "">("");
-  const [bloodGroup, setBloodGroup] = useState("");
-
-  // Patient detailed intake
   const [phone, setPhone] = useState("");
-  const [address, setAddress] = useState("");
-  const [abhaNumber, setAbhaNumber] = useState("");
-  const [emergencyContactName, setEmergencyContactName] = useState("");
-  const [emergencyContactPhone, setEmergencyContactPhone] = useState("");
-  const [allergiesText, setAllergiesText] = useState("");
-  const [conditionsText, setConditionsText] = useState("");
-  const [medsText, setMedsText] = useState("");
 
-  // Doctor detailed intake
-  const [hprNumber, setHprNumber] = useState("");
-  const [selectedQuals, setSelectedQuals] = useState<string[]>([]);
-  const [selectedSpecialty, setSelectedSpecialty] = useState("");
-  const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
-  const [consultationFee, setConsultationFee] = useState("");
+  // Assistant intake — links the new account to an existing, verified doctor
+  const [doctorQuery, setDoctorQuery] = useState("");
+  const [doctorResults, setDoctorResults] = useState<DoctorSearchResult[]>([]);
+  const [selectedDoctor, setSelectedDoctor] = useState<DoctorSearchResult | null>(null);
+  const [searchingDoctors, setSearchingDoctors] = useState(false);
 
-  // Doctor File uploads
-  const [degreeFile, setDegreeFile] = useState<File | null>(null);
-  const [registrationCertFile, setRegistrationCertFile] = useState<File | null>(null);
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
-  const [signatureFile, setSignatureFile] = useState<File | null>(null);
-
-  const STEPS_NEW: Step[] = ["welcome", "phone", "otp", "role", "abha", "patient-intake"];
+  const STEPS_NEW: Step[] = ["welcome", "phone", "otp", "role"];
   const STEPS_RETURNING: Step[] = ["welcome", "phone", "otp"];
   const stepsOrder = flow === "returning" ? STEPS_RETURNING : STEPS_NEW;
   const progressPct = step === "welcome" ? 0 : (stepsOrder.indexOf(step) / (stepsOrder.length - 1)) * 100;
@@ -108,7 +78,7 @@ export default function OnboardingPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
       });
-      
+
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to send OTP.");
 
@@ -163,7 +133,7 @@ export default function OnboardingPage() {
 
     const next = pastedData.split("");
     setOtp(next);
-    
+
     // Focus the last input
     (document.getElementById("otp-5") as HTMLInputElement)?.focus();
   }
@@ -175,6 +145,39 @@ export default function OnboardingPage() {
       }, 50);
     }
   }, [step]);
+
+  // Debounced doctor search for the assistant role, shown inline on the role step.
+  useEffect(() => {
+    if (step !== "role" || role !== "assistant" || doctorQuery.trim().length < 2) {
+      setDoctorResults([]);
+      return;
+    }
+
+    let active = true;
+    setSearchingDoctors(true);
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(
+          `/api/practitioners/search?q=${encodeURIComponent(doctorQuery.trim())}`,
+          { cache: "no-store" }
+        );
+        const data = await response.json().catch(() => null);
+        if (active) {
+          setDoctorResults(response.ok ? data?.data ?? [] : []);
+        }
+      } catch {
+        if (active) setDoctorResults([]);
+      } finally {
+        if (active) setSearchingDoctors(false);
+      }
+    }, 300);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [doctorQuery, step]);
 
   async function handleVerifyOTP() {
     const otpString = otp.join("");
@@ -222,11 +225,6 @@ export default function OnboardingPage() {
   }
 
   async function finishPatient() {
-    if (abhaNumber && !/^\d{14}$/.test(abhaNumber.replace(/[-\s]/g, ""))) {
-      setError("ABHA ID must be exactly 14 digits");
-      return;
-    }
-
     setLoading(true);
     setError("");
     try {
@@ -235,32 +233,19 @@ export default function OnboardingPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           fullName,
-          dateOfBirth: dob,
-          gender,
           phone: phone || "",
           email,
-          address,
-          abhaNumber: abhaNumber.replace(/[-\s]/g, ""),
-          emergencyContactName,
-          emergencyContactPhone,
-          allergies: allergiesText
-            ? allergiesText.split(",").map((x) => x.trim()).filter(Boolean)
-            : [],
-          chronicConditions: conditionsText
-            ? conditionsText.split(",").map((x) => x.trim()).filter(Boolean)
-            : [],
-          currentMedications: medsText
-            ? medsText.split(",").map((x) => x.trim()).filter(Boolean)
-            : [],
         }),
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to create patient account.");
 
-      login({ id: data.data?.userId || "", phone: phone || "", role: "patient", name: fullName, abhaLinked: !!abhaNumber, email });
+      login({ id: data.data?.userId || "", phone: phone || "", role: "patient", name: fullName, abhaLinked: false, email });
       toast.success("Account created successfully!");
-      router.push("/discover");
+      // Land on profile completion first, not the dashboard — the account exists
+      // but the health record itself is still empty at this point.
+      router.push("/profile/create-profile");
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Failed to create patient account.");
@@ -269,44 +254,10 @@ export default function OnboardingPage() {
     }
   }
 
-  async function uploadStorageFile(bucket: string, path: string, file: File): Promise<string> {
-    const supabase = createClient();
-    const { data, error } = await supabase.storage.from(bucket).upload(path, file, {
-      cacheControl: "3600",
-      upsert: true,
-    });
-    if (error) throw error;
-    return `${bucket}/${data.path}`;
-  }
-
-  async function finishDoctor() {
-    if (!degreeFile || !registrationCertFile) {
-      setError("Please upload both Degree and Registration Certificates.");
-      return;
-    }
-
+  async function finishDoctorQuick() {
     setLoading(true);
     setError("");
     try {
-      // The user ID should ideally be fetched from the API, but for storage uploads on the client,
-      // we need to use a temporary ID or email. To fix this securely requires a signed upload URL.
-      // For now, use the email as a folder path to ensure uploads work without waiting for the DB id.
-      const uploadPrefix = email.replace(/[^a-zA-Z0-9]/g, "_");
-
-      // Upload files (this might require RLS updates on the bucket if it previously relied on auth.uid())
-      const degreeUrl = await uploadStorageFile("doctor-documents", `${uploadPrefix}/degree_${Date.now()}_${degreeFile.name}`, degreeFile);
-      const registrationCertUrl = await uploadStorageFile("doctor-documents", `${uploadPrefix}/reg_${Date.now()}_${registrationCertFile.name}`, registrationCertFile);
-
-      let photoUrl = "";
-      if (photoFile) {
-        photoUrl = await uploadStorageFile("doctor-documents", `${uploadPrefix}/photo_${Date.now()}_${photoFile.name}`, photoFile);
-      }
-
-      let signatureUrl = "";
-      if (signatureFile) {
-        signatureUrl = await uploadStorageFile("doctor-documents", `${uploadPrefix}/sig_${Date.now()}_${signatureFile.name}`, signatureFile);
-      }
-
       const res = await fetch("/api/auth/onboard-doctor/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -314,17 +265,6 @@ export default function OnboardingPage() {
           email,
           phone,
           fullName,
-          photoUrl,
-          signatureUrl,
-          consultationFee: Math.round(parseFloat(consultationFee) * 100),
-          specializations: selectedSpecialty ? [selectedSpecialty] : ["Ayurveda"],
-          languages: selectedLanguages,
-          degreeUrl,
-          registrationCertUrl,
-          hprId: hprNumber || undefined,
-          dateOfBirth: dob || undefined,
-          gender: gender || undefined,
-          bloodGroup: bloodGroup || undefined,
         })
       });
 
@@ -339,41 +279,80 @@ export default function OnboardingPage() {
         phone: phone || "",
         role: "practitioner",
         name: fullName,
-        abhaLinked: !!hprNumber,
+        abhaLinked: false,
         email
       });
 
-      setStep("success");
+      // Land on profile completion first — the practitioner record exists but
+      // still needs qualifications/specialty/fee/documents before admin review.
+      router.push("/profile/create-profile");
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "Failed to submit verification request.");
+      setError(err.message || "Failed to save profile.");
     } finally {
       setLoading(false);
     }
   }
 
-  function toggleLanguage(l: string) {
-    setSelectedLanguages((prev) => (prev.includes(l) ? prev.filter((x) => x !== l) : [...prev, l]));
+  async function finishAssistant() {
+    if (!fullName.trim()) {
+      setError("Please enter your full name.");
+      return;
+    }
+    if (!selectedDoctor) {
+      setError("Please search for and select the doctor you assist.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/auth/onboard-assistant/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email,
+          phone,
+          fullName,
+          practitionerId: selectedDoctor.id,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || data.error || "Failed to create assistant account.");
+      }
+
+      // Update frontend AuthContext so client-side routing knows the user is an assistant
+      login({
+        id: data.data?.userId || "",
+        phone: phone || "",
+        role: "assistant" as any,
+        name: fullName,
+        abhaLinked: false,
+        email,
+      });
+
+      router.push("/pro");
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || "Failed to create assistant account.");
+    } finally {
+      setLoading(false);
+    }
   }
 
-  function toggleQual(q: string) {
-    setSelectedQuals((prev) => (prev.includes(q) ? prev.filter((x) => x !== q) : [...prev, q]));
-  }
 
   return (
-    <div className="min-h-full flex items-center justify-center bg-background py-8 px-4">
-      <div className="w-full max-w-lg">
-        {step !== "welcome" && step !== "success" && (
+    <div className="min-h-full flex items-center justify-center bg-background py-6 sm:py-8 px-4 sm:px-6 lg:px-8">
+      <div className="w-full max-w-lg sm:max-w-xl md:max-w-2xl lg:max-w-3xl transition-[max-width] duration-300">
+        {step !== "welcome" && (
           <div className="mb-6">
             <div className="flex items-center gap-3 mb-3">
               <button
                 onClick={() => {
                   if (step === "otp") setStep("welcome");
                   else if (step === "role") setStep("otp");
-                  else if (step === "abha") setStep("role");
-                  else if (step === "patient-intake") setStep("abha");
-                  else if (step === "doctor-intake") setStep("role");
-                  else if (step === "doctor-documents") setStep("doctor-intake");
                 }}
                 className="p-1.5 rounded-lg hover:bg-muted transition-colors"
               >
@@ -405,7 +384,7 @@ export default function OnboardingPage() {
                   MeyVeda
                 </span>
               </h1>
-              
+
               {/* Tagline */}
               <p className="text-[#6B7280] text-base md:text-lg font-medium leading-relaxed max-w-[500px] mx-auto">
                 India&apos;s first AYUSH digital health ecosystem — connecting ancient healing wisdom with verified modern care.
@@ -428,11 +407,27 @@ export default function OnboardingPage() {
                 <input
                   type="email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => { setEmail(e.target.value); setAccountExists(false); }}
+                  onBlur={async () => {
+                    if (!email || !email.includes("@")) return;
+                    try {
+                      const res = await fetch(`/api/auth/check-account?email=${encodeURIComponent(email)}`);
+                      const data = await res.json();
+                      setAccountExists(!!data?.data?.exists);
+                    } catch {
+                      setAccountExists(false);
+                    }
+                  }}
                   placeholder="Enter your email address"
                   className="w-full px-4 py-3 border border-border rounded-xl text-sm focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 bg-white shadow-sm"
                 />
               </div>
+
+              {accountExists && (
+                <div className="bg-blue-50 border border-blue-200 rounded-xl px-3.5 py-2.5 text-sm text-blue-700 w-full max-w-[400px] text-left">
+                  An account with this email already exists.
+                </div>
+              )}
 
               {error && (
                 <div className="bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5 text-sm text-red-700 w-full max-w-[400px] flex items-start gap-2 text-left">
@@ -446,7 +441,7 @@ export default function OnboardingPage() {
                 disabled={!email || !email.includes("@")}
                 className="w-full max-w-[400px] h-[52px] rounded-[14px] bg-gradient-to-r from-[#3B5BFF] to-[#A855F7] text-white text-base font-semibold flex items-center justify-center gap-2 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-lg hover:shadow-purple-500/25 active:translate-y-0 active:shadow-md cursor-pointer focus:outline-none focus-visible:ring-4 focus-visible:ring-purple-500/30 disabled:opacity-50 disabled:cursor-not-allowed group"
               >
-                {loading ? "Sending OTP..." : "Continue"}
+                {loading ? "Sending OTP..." : accountExists ? "Sign In" : "Continue"}
                 {!loading && (
                   <svg className="w-4 h-4 transition-transform duration-300 group-hover:translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />
@@ -494,8 +489,15 @@ export default function OnboardingPage() {
               ))}
             </div>
 
+            {error && (
+              <div className="bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5 text-sm text-red-700 mb-6 flex items-start gap-2 text-left">
+                <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
             {/* Countdown / Resend UI */}
-            <div className="flex justify-between items-center mb-8">
+            <div className="flex justify-between items-center mb-3 max-w-[200px] mx-auto">
               <span className="text-[11px] text-muted-foreground">
                 {resendTimer > 0 ? `Expires in ${formatTimer(resendTimer)}` : "OTP Expired"}
               </span>
@@ -510,18 +512,11 @@ export default function OnboardingPage() {
               )}
             </div>
 
-            {error && (
-              <div className="bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5 text-sm text-red-700 mb-6 flex items-start gap-2 text-left">
-                <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
-
             <button
               onClick={handleVerifyOTP}
               disabled={otp.join("").length < 6 || loading}
               className={cn(
-                "w-full py-3.5 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2",
+                "w-full max-w-[200px] mx-auto py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2",
                 otp.join("").length === 6 && !loading
                   ? "bg-herb-green text-white hover:bg-herb-green/90 shadow-md hover:shadow-lg active:scale-[0.99]"
                   : "bg-muted text-muted-foreground cursor-not-allowed"
@@ -539,558 +534,174 @@ export default function OnboardingPage() {
           </div>
         )}
 
-        {/* ── Role Selection ── */}
+        {/* ── Personal Info & Role Selection ── */}
         {step === "role" && (
-          <div>
-            <h2 className="font-display text-2xl font-bold text-foreground mb-1">How will you use MeyVeda?</h2>
-            <p className="text-sm text-muted-foreground mb-6">Choose your primary role</p>
-            <div className="space-y-3 mb-6">
-              {[
-                { id: "patient" as const, icon: "🏥", title: "Patient / Health Seeker", desc: "Book consultations, manage health records, track wellness" },
-                { id: "doctor" as const, icon: "🩺", title: "AYUSH Doctor / Specialist", desc: "Consult patients, write digital EMR prescriptions, build practice" },
-              ].map((r) => (
-                <button
-                  key={r.id}
-                  onClick={() => setRole(r.id)}
-                  className={cn(
-                    "w-full flex items-start gap-4 p-4 rounded-2xl border-2 text-left transition-all",
-                    role === r.id ? "border-herb-green bg-herb-green/5 shadow-sm" : "border-border hover:border-herb-green/30 bg-white"
-                  )}
-                >
-                  <span className="text-3xl flex-shrink-0">{r.icon}</span>
-                  <div>
-                    <p className="font-semibold text-foreground">{r.title}</p>
-                    <p className="text-xs text-muted-foreground mt-1">{r.desc}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
-            <button
-              onClick={() => {
-                if (role === "doctor") setStep("doctor-intake");
-                else setStep("abha");
-              }}
-              disabled={!role}
-              className={cn(
-                "w-full py-3.5 rounded-xl text-sm font-semibold transition-all",
-                role ? "bg-herb-green text-white hover:bg-herb-green/90 shadow-md" : "bg-muted text-muted-foreground cursor-not-allowed"
-              )}
-            >
-              Continue
-            </button>
-          </div>
-        )}
-
-        {/* ── ABHA ID Verification (patient only) ── */}
-        {step === "abha" && (
-          <div>
-            <div className="flex items-center gap-3 mb-1">
-              <div className="w-10 h-10 rounded-xl bg-herb-green/10 flex items-center justify-center">
-                <Shield size={20} className="text-herb-green" />
-              </div>
-              <h2 className="font-display text-2xl font-bold text-foreground">ABHA Card & ID</h2>
-            </div>
-            <p className="text-sm text-muted-foreground mb-6">
-              ABHA (Ayushman Bharat Health Account) enables seamless secure sharing of health records across India.
-            </p>
-            <div className="space-y-4">
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <h2 className="font-display text-2xl font-bold text-foreground tracking-tight mb-1.5">Complete Your Profile</h2>
+            <p className="text-sm text-muted-foreground mb-6">Tell us a bit about yourself</p>
+            
+            <div className="space-y-4 mb-6">
               <div>
-                <label className="text-xs font-semibold text-foreground block mb-1.5">ABHA ID (14 digits) - Optional</label>
+                <label className="text-xs font-semibold text-foreground block mb-1">
+                  Full Name <span className="text-red-500">*</span>
+                </label>
                 <input
-                  type="text"
-                  maxLength={14}
-                  value={abhaNumber}
-                  onChange={(e) => setAbhaNumber(e.target.value.replace(/\D/g, ""))}
-                  placeholder="e.g. 12345678901234"
-                  className="w-full px-4 py-3 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white font-mono tracking-widest text-center"
-                />
-                {abhaNumber && abhaNumber.length !== 14 && (
-                  <p className="text-xs text-red-500 mt-1">Must be exactly 14 digits ({abhaNumber.length}/14)</p>
-                )}
-              </div>
-            </div>
-            <div className="mt-8 flex gap-3">
-              <button
-                onClick={() => { setAbhaNumber(""); setStep("patient-intake"); }}
-                className="flex-1 py-3.5 border border-border text-sm font-semibold rounded-xl hover:bg-muted transition-colors text-foreground"
-              >
-                Skip / Do Later
-              </button>
-              <button
-                onClick={() => setStep("patient-intake")}
-                disabled={abhaNumber.length > 0 && abhaNumber.length !== 14}
-                className={cn(
-                  "flex-1 py-3.5 rounded-xl text-sm font-semibold transition-all",
-                  !(abhaNumber.length > 0 && abhaNumber.length !== 14)
-                    ? "bg-herb-green text-white hover:bg-herb-green/90 shadow-md"
-                    : "bg-muted text-muted-foreground cursor-not-allowed"
-                )}
-              >
-                Continue
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ── Patient Intake Form ── */}
-        {step === "patient-intake" && (
-          <div>
-            <h2 className="font-display text-2xl font-bold text-foreground mb-1">Create Patient Profile</h2>
-            <p className="text-sm text-muted-foreground mb-6">Complete your clinical health record profile</p>
-
-            <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1 pb-4">
-              {/* Personal */}
-              <div className="space-y-3">
-                <p className="text-xs font-bold text-herb-green uppercase tracking-wider">Personal Information</p>
-                <div>
-                  <label className="text-xs font-semibold text-foreground block mb-1">Full Name</label>
-                  <input
-                    required
-                    type="text"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    placeholder="e.g. Rohit Kumar"
-                    className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-semibold text-foreground block mb-1">Date of Birth</label>
-                    <input
-                      required
-                      type="date"
-                      value={dob}
-                      onChange={(e) => setDob(e.target.value)}
-                      className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white text-muted-foreground"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-semibold text-foreground block mb-1">Gender</label>
-                    <select
-                      required
-                      value={gender}
-                      onChange={(e) => setGender(e.target.value as any)}
-                      className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white"
-                    >
-                      <option value="">Select gender</option>
-                      <option value="male">Male</option>
-                      <option value="female">Female</option>
-                      <option value="other">Other</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-semibold text-foreground block mb-1">Phone Number</label>
-                    <input
-                      required
-                      type="tel"
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      placeholder="10-digit mobile"
-                      className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-semibold text-foreground block mb-1">Address</label>
-                    <input
-                      type="text"
-                      value={address}
-                      onChange={(e) => setAddress(e.target.value)}
-                      placeholder="City, State"
-                      className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Emergency Contact */}
-              <div className="space-y-3 pt-2">
-                <p className="text-xs font-bold text-herb-green uppercase tracking-wider">Emergency Contact</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-semibold text-foreground block mb-1">Contact Person</label>
-                    <input
-                      type="text"
-                      value={emergencyContactName}
-                      onChange={(e) => setEmergencyContactName(e.target.value)}
-                      placeholder="Name"
-                      className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-semibold text-foreground block mb-1">Contact Phone</label>
-                    <input
-                      type="tel"
-                      value={emergencyContactPhone}
-                      onChange={(e) => setEmergencyContactPhone(e.target.value)}
-                      placeholder="Phone"
-                      className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Clinical Details */}
-              <div className="space-y-3 pt-2">
-                <p className="text-xs font-bold text-herb-green uppercase tracking-wider">Clinical details</p>
-                <div>
-                  <label className="text-xs font-semibold text-foreground block mb-1">Allergies (comma-separated)</label>
-                  <input
-                    type="text"
-                    value={allergiesText}
-                    onChange={(e) => setAllergiesText(e.target.value)}
-                    placeholder="e.g. Peanuts, Penicillin, Dust"
-                    className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-foreground block mb-1">Chronic Conditions (comma-separated)</label>
-                  <input
-                    type="text"
-                    value={conditionsText}
-                    onChange={(e) => setConditionsText(e.target.value)}
-                    placeholder="e.g. Hypertension, Type 2 Diabetes"
-                    className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-foreground block mb-1">Current Medications (comma-separated)</label>
-                  <input
-                    type="text"
-                    value={medsText}
-                    onChange={(e) => setMedsText(e.target.value)}
-                    placeholder="e.g. Metformin 500mg, Amlodipine 5mg"
-                    className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {error && (
-              <div className="bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5 text-sm text-red-700 mt-4 flex items-start gap-2">
-                <AlertCircle size={16} className="mt-0.5" />
-                <span>{error}</span>
-              </div>
-            )}
-
-            <button
-              onClick={finishPatient}
-              disabled={!fullName || !dob || !gender || !phone || loading}
-              className={cn(
-                "w-full py-3.5 mt-6 bg-herb-green text-white rounded-xl text-sm font-semibold transition-all shadow-md",
-                !fullName || !dob || !gender || !phone || loading
-                  ? "opacity-60 cursor-not-allowed"
-                  : "hover:bg-herb-green/90 active:scale-98"
-              )}
-            >
-              {loading ? "Creating Profile..." : "Register Profile ✨"}
-            </button>
-          </div>
-        )}
-
-        {/* ── Doctor Intake Form ── */}
-        {step === "doctor-intake" && (
-          <div>
-            <h2 className="font-display text-2xl font-bold text-foreground mb-1">Doctor Profile Details</h2>
-            <p className="text-sm text-muted-foreground mb-6 font-medium">Set up your specialty, languages, and practice fee</p>
-
-            <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1 pb-4">
-              <div>
-                <label className="text-xs font-semibold text-foreground block mb-1">Full Name (with Dr. prefix)</label>
-                <input
-                  required
                   type="text"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  placeholder="e.g. Dr. Ramesh Kumar"
+                  placeholder="Enter your full name"
                   className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white"
                 />
               </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold text-foreground block mb-1">Phone Number</label>
-                  <input
-                    required
-                    type="tel"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="10-digit mobile"
-                    className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-foreground block mb-1">Date of Birth</label>
-                  <input
-                    required
-                    type="date"
-                    value={dob}
-                    onChange={(e) => setDob(e.target.value)}
-                    className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white text-muted-foreground"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold text-foreground block mb-1">Gender</label>
-                  <select
-                    required
-                    value={gender}
-                    onChange={(e) => setGender(e.target.value as any)}
-                    className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white"
-                  >
-                    <option value="">Select gender</option>
-                    <option value="male">Male</option>
-                    <option value="female">Female</option>
-                    <option value="other">Other</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-foreground block mb-1">Blood Group</label>
-                  <select
-                    value={bloodGroup}
-                    onChange={(e) => setBloodGroup(e.target.value)}
-                    className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white"
-                  >
-                    <option value="">Select blood group</option>
-                    {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map(bg => (
-                      <option key={bg} value={bg}>{bg}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold text-foreground block mb-1">HPR ID (optional)</label>
-                  <input
-                    type="text"
-                    value={hprNumber}
-                    onChange={(e) => setHprNumber(e.target.value)}
-                    placeholder="e.g. HPR-1234-5678"
-                    className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-foreground block mb-1">Consultation Fee (in INR)</label>
-                  <input
-                    required
-                    type="number"
-                    value={consultationFee}
-                    onChange={(e) => setConsultationFee(e.target.value)}
-                    placeholder="e.g. 500"
-                    className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white"
-                  />
-                </div>
-              </div>
-
               <div>
-                <label className="text-xs font-semibold text-foreground block mb-1.5">AYUSH Qualifications</label>
-                <div className="flex flex-wrap gap-1.5">
-                  {AYUSH_QUALIFICATIONS.map((q) => (
-                    <button
-                      key={q}
-                      onClick={() => toggleQual(q)}
-                      className={cn(
-                        "text-xs px-3 py-1.5 rounded-full border transition-all font-medium",
-                        selectedQuals.includes(q)
-                          ? "bg-herb-green text-white border-herb-green"
-                          : "border-border text-muted-foreground hover:border-herb-green/40 bg-white"
-                      )}
-                    >
-                      {q}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-foreground block mb-1">Primary Specialty</label>
-                <select
-                  required
-                  value={selectedSpecialty}
-                  onChange={(e) => setSelectedSpecialty(e.target.value)}
+                <label className="text-xs font-semibold text-foreground block mb-1">
+                  Phone Number <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="10-digit mobile"
                   className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white"
-                >
-                  <option value="">Select Specialty</option>
-                  {AYUSH_SPECIALTIES.map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
+                />
               </div>
+            </div>
 
-              <div>
-                <label className="text-xs font-semibold text-foreground block mb-1.5">Languages Spoken</label>
-                <div className="flex flex-wrap gap-1.5">
-                  {LANGUAGES.map((l) => (
+            <h3 className="font-semibold text-foreground mb-3 text-sm">Select Your Role</h3>
+            <div className="space-y-3 mb-6">
+              {[
+                { id: "patient" as const, Icon: HeartPulse, title: "Patient / Health Seeker", desc: "Book consultations, manage health records, track wellness" },
+                { id: "doctor" as const, Icon: Stethoscope, title: "AYUSH Doctor / Specialist", desc: "Consult patients, write digital EMR prescriptions, build practice" },
+                { id: "assistant" as const, Icon: UserCog, title: "Doctor's Assistant", desc: "Manage a doctor's appointments, prescriptions and records with their approval" },
+              ].map((r) => {
+                const selected = role === r.id;
+                return (
+                  <div key={r.id}>
                     <button
-                      key={l}
-                      onClick={() => toggleLanguage(l)}
+                      onClick={() => setRole(r.id)}
                       className={cn(
-                        "text-xs px-3 py-1.5 rounded-full border transition-all font-medium",
-                        selectedLanguages.includes(l)
-                          ? "bg-herb-green text-white border-herb-green"
-                          : "border-border text-muted-foreground hover:border-herb-green/40 bg-white"
+                        "w-full flex items-center gap-4 p-4 rounded-2xl border text-left transition-all duration-200 group",
+                        selected
+                          ? "border-herb-green/40 bg-herb-green/[0.04] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.02)] ring-1 ring-herb-green/20"
+                          : "border-border/70 hover:border-herb-green/25 hover:bg-muted/30 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.03)]"
                       )}
                     >
-                      {l}
+                      <div
+                        className={cn(
+                          "w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 transition-colors",
+                          selected ? "bg-herb-green text-white" : "bg-muted text-muted-foreground group-hover:text-herb-green/70"
+                        )}
+                      >
+                        <r.Icon size={20} strokeWidth={2} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-[15px] text-foreground leading-tight">{r.title}</p>
+                        <p className="text-[13px] text-muted-foreground mt-1 leading-snug">{r.desc}</p>
+                      </div>
+                      <div
+                        className={cn(
+                          "w-5 h-5 rounded-full border flex items-center justify-center flex-shrink-0 transition-all",
+                          selected ? "bg-herb-green border-herb-green" : "border-border/80 bg-white"
+                        )}
+                      >
+                        {selected && <Check size={12} strokeWidth={3} className="text-white" />}
+                      </div>
                     </button>
-                  ))}
-                </div>
-              </div>
+                    {/* Inline Assistant Search */}
+                    {selected && r.id === "assistant" && (
+                      <div className="mt-3 p-4 bg-muted/30 rounded-xl border border-border/50 animate-in fade-in slide-in-from-top-2 duration-300">
+                        <label className="text-xs font-semibold text-foreground block mb-2">
+                          Search and Select the Doctor you assist <span className="text-red-500">*</span>
+                        </label>
+                        {selectedDoctor ? (
+                          <div className="flex items-center justify-between rounded-xl border border-herb-green/40 bg-white px-3.5 py-2.5 shadow-sm">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium text-foreground">{selectedDoctor.fullName}</p>
+                              <p className="truncate text-xs text-muted-foreground">{selectedDoctor.email}</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedDoctor(null);
+                                setDoctorQuery("");
+                              }}
+                              className="ml-2 flex-shrink-0 text-xs font-medium text-herb-green hover:underline"
+                            >
+                              Change
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="relative">
+                            <input
+                              type="text"
+                              value={doctorQuery}
+                              onChange={(e) => setDoctorQuery(e.target.value)}
+                              placeholder="Search by doctor name or email"
+                              className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white"
+                            />
+                            {(searchingDoctors || doctorResults.length > 0) && doctorQuery.trim().length >= 2 && (
+                              <div className="absolute z-10 mt-1.5 max-h-56 w-full overflow-y-auto rounded-xl border border-border bg-white shadow-lg">
+                                {searchingDoctors ? (
+                                  <p className="px-3.5 py-2.5 text-xs text-muted-foreground">Searching…</p>
+                                ) : doctorResults.length === 0 ? (
+                                  <p className="px-3.5 py-2.5 text-xs text-muted-foreground">No verified doctors found.</p>
+                                ) : (
+                                  doctorResults.map((doc) => (
+                                    <button
+                                      key={doc.id}
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedDoctor(doc);
+                                        setDoctorResults([]);
+                                      }}
+                                      className="block w-full px-3.5 py-2.5 text-left text-sm hover:bg-muted transition-colors"
+                                    >
+                                      <p className="font-medium text-foreground">{doc.fullName}</p>
+                                      <p className="text-xs text-muted-foreground">{doc.email}</p>
+                                    </button>
+                                  ))
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-
-            <button
-              onClick={() => setStep("doctor-documents")}
-              disabled={!fullName || !phone || !dob || !gender || !consultationFee || !selectedSpecialty || selectedLanguages.length === 0}
-              className={cn(
-                "w-full py-3.5 mt-6 bg-herb-green text-white rounded-xl text-sm font-semibold transition-all shadow-md",
-                !fullName || !phone || !dob || !gender || !consultationFee || !selectedSpecialty || selectedLanguages.length === 0
-                  ? "opacity-60 cursor-not-allowed"
-                  : "hover:bg-herb-green/90 active:scale-98"
-              )}
-            >
-              Continue to Document Uploads
-            </button>
-          </div>
-        )}
-
-        {/* ── Doctor Document Uploads ── */}
-        {step === "doctor-documents" && (
-          <div>
-            <h2 className="font-display text-2xl font-bold text-foreground mb-1">Upload Credentials</h2>
-            <p className="text-sm text-muted-foreground mb-6 font-medium">Verify credentials for medical registration</p>
-
-            <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1 pb-4">
-              {/* Degree Cert */}
-              <div className="border border-dashed border-border rounded-2xl p-4 bg-white hover:border-herb-green/50 transition-all">
-                <label className="flex flex-col items-center justify-center cursor-pointer gap-2">
-                  <Award size={28} className="text-muted-foreground" />
-                  <span className="text-xs font-bold text-foreground">BAMS / AYUSH Degree Certificate (PDF/Image) *</span>
-                  <input
-                    required
-                    type="file"
-                    accept="image/*,application/pdf"
-                    onChange={(e) => setDegreeFile(e.target.files?.[0] || null)}
-                    className="hidden"
-                  />
-                  {degreeFile ? (
-                    <span className="text-xs text-herb-green font-semibold bg-herb-green/10 px-2 py-0.5 rounded-full">
-                      ✓ {degreeFile.name}
-                    </span>
-                  ) : (
-                    <span className="text-[10px] text-muted-foreground">Click to upload document</span>
-                  )}
-                </label>
-              </div>
-
-              {/* State registration certificate */}
-              <div className="border border-dashed border-border rounded-2xl p-4 bg-white hover:border-herb-green/50 transition-all">
-                <label className="flex flex-col items-center justify-center cursor-pointer gap-2">
-                  <FileText size={28} className="text-muted-foreground" />
-                  <span className="text-xs font-bold text-foreground">State Council Registration Certificate (PDF/Image) *</span>
-                  <input
-                    required
-                    type="file"
-                    accept="image/*,application/pdf"
-                    onChange={(e) => setRegistrationCertFile(e.target.files?.[0] || null)}
-                    className="hidden"
-                  />
-                  {registrationCertFile ? (
-                    <span className="text-xs text-herb-green font-semibold bg-herb-green/10 px-2 py-0.5 rounded-full">
-                      ✓ {registrationCertFile.name}
-                    </span>
-                  ) : (
-                    <span className="text-[10px] text-muted-foreground">Click to upload document</span>
-                  )}
-                </label>
-              </div>
-
-              {/* Profile Photo */}
-              <div className="border border-dashed border-border rounded-2xl p-4 bg-white hover:border-herb-green/50 transition-all">
-                <label className="flex flex-col items-center justify-center cursor-pointer gap-2">
-                  <User size={28} className="text-muted-foreground" />
-                  <span className="text-xs font-bold text-foreground">Profile Photo (Image)</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => setPhotoFile(e.target.files?.[0] || null)}
-                    className="hidden"
-                  />
-                  {photoFile ? (
-                    <span className="text-xs text-herb-green font-semibold bg-herb-green/10 px-2 py-0.5 rounded-full">
-                      ✓ {photoFile.name}
-                    </span>
-                  ) : (
-                    <span className="text-[10px] text-muted-foreground">Click to upload image</span>
-                  )}
-                </label>
-              </div>
-
-              {/* Doctor Signature */}
-              <div className="border border-dashed border-border rounded-2xl p-4 bg-white hover:border-herb-green/50 transition-all">
-                <label className="flex flex-col items-center justify-center cursor-pointer gap-2">
-                  <Upload size={28} className="text-muted-foreground" />
-                  <span className="text-xs font-bold text-foreground">Doctor Signature (Image)</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => setSignatureFile(e.target.files?.[0] || null)}
-                    className="hidden"
-                  />
-                  {signatureFile ? (
-                    <span className="text-xs text-herb-green font-semibold bg-herb-green/10 px-2 py-0.5 rounded-full">
-                      ✓ {signatureFile.name}
-                    </span>
-                  ) : (
-                    <span className="text-[10px] text-muted-foreground">Click to upload image</span>
-                  )}
-                </label>
-              </div>
-            </div>
-
+            
             {error && (
-              <div className="bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5 text-sm text-red-700 mt-4 flex items-start gap-2">
-                <AlertCircle size={16} className="mt-0.5" />
+              <div className="bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5 text-sm text-red-700 mb-6 flex items-start gap-2">
+                <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
                 <span>{error}</span>
               </div>
             )}
 
             <button
-              onClick={finishDoctor}
-              disabled={!degreeFile || !registrationCertFile || loading}
+              onClick={() => {
+                if (!fullName.trim() || !phone.trim()) {
+                   setError("Please enter your full name and phone number.");
+                   return;
+                }
+                if (role === "doctor") {
+                   finishDoctorQuick();
+                } else if (role === "assistant") {
+                   finishAssistant();
+                } else {
+                   finishPatient();
+                }
+              }}
+              disabled={!role || loading}
               className={cn(
-                "w-full py-3.5 mt-6 bg-herb-green text-white rounded-xl text-sm font-semibold transition-all shadow-md",
-                !degreeFile || !registrationCertFile || loading
-                  ? "opacity-60 cursor-not-allowed"
-                  : "hover:bg-herb-green/90 active:scale-98"
+                "w-full py-3.5 rounded-xl text-sm font-semibold transition-all duration-200",
+                role && !loading
+                  ? "bg-herb-green text-white hover:bg-herb-green/90 shadow-md shadow-herb-green/15 active:scale-[0.99]"
+                  : "bg-muted text-muted-foreground cursor-not-allowed"
               )}
             >
-              {loading ? "Uploading & Submitting..." : "Submit Profile for Review ✨"}
-            </button>
-          </div>
-        )}
-
-        {/* ── Success screen ── */}
-        {step === "success" && (
-          <div className="text-center py-8">
-            <div className="w-16 h-16 bg-herb-green/10 rounded-full flex items-center justify-center mx-auto mb-6">
-              <CheckCircle size={36} className="text-herb-green" />
-            </div>
-            <h2 className="font-display text-3xl font-bold text-foreground">Submitted Successfully!</h2>
-            <p className="text-sm text-muted-foreground mt-3 max-w-sm mx-auto leading-relaxed">
-              Your profile documents have been uploaded securely. Our administrative team will review your qualifications and credentials.
-            </p>
-            <p className="text-xs text-amber-600 bg-amber-50 rounded-xl px-4 py-2 mt-4 inline-block border border-amber-100 font-medium">
-              We&apos;ll notify you by email once your verification status is updated.
-            </p>
-            <button
-              onClick={() => router.push("/")}
-              className="mt-8 w-full py-3.5 bg-herb-green text-white rounded-xl text-sm font-semibold hover:bg-herb-green/90 shadow-md transition-all"
-            >
-              Return to Home
+              {loading ? "Please wait..." : "Complete Setup"}
             </button>
           </div>
         )}

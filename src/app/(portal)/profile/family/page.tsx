@@ -4,48 +4,74 @@ import Link from "next/link";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
-import { useFamilyMembers, addFamilyMemberApi, deleteFamilyMemberApi } from "@/hooks/use-family";
+import { useFamilyMembers, addFamilyMemberApi, updateFamilyMemberApi, deleteFamilyMemberApi, type FamilyMemberRow } from "@/hooks/use-family";
 
 type Relation = "Spouse" | "Parent" | "Child" | "Sibling" | "Other";
 
 const RELATIONS: Relation[] = ["Spouse", "Parent", "Child", "Sibling", "Other"];
 
-const DOSHA_COLOR: Record<string, string> = {
-  Vata: "bg-sky-100 text-sky-700",
-  Pitta: "bg-amber-100 text-amber-700",
-  Kapha: "bg-emerald-100 text-emerald-700",
-};
+const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 
 export default function FamilyProfilesPage() {
   const { user } = useAuth();
   const { data: members = [], loading, refetch } = useFamilyMembers(user?.id);
 
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   // Form state
-  const [form, setForm] = useState({ name: "", relation: "Spouse" as Relation, age: "", gender: "Female", abha: "" });
+  const emptyForm = { name: "", relation: "Spouse" as Relation, age: "", gender: "Female", phone: "", bloodGroup: "" };
+  const [form, setForm] = useState(emptyForm);
 
-  async function handleAdd() {
+  function openAddForm() {
+    setEditingId(null);
+    setForm(emptyForm);
+    setShowForm(true);
+  }
+
+  function openEditForm(member: FamilyMemberRow) {
+    setEditingId(member.id);
+    setActiveId(null);
+    setForm({
+      name: member.name,
+      relation: (member.relationship.charAt(0).toUpperCase() + member.relationship.slice(1)) as Relation,
+      age: String(member.age || ""),
+      gender: member.gender || "Female",
+      phone: member.phone ?? "",
+      bloodGroup: member.bloodGroup ?? "",
+    });
+    setShowForm(true);
+  }
+
+  async function handleSubmit() {
     if (!form.name || !form.age || !user?.id) return;
     setSubmitting(true);
     try {
       const birthYear = new Date().getFullYear() - parseInt(form.age);
       const dobString = `${birthYear}-06-15`; // Mid-year approximation for DOB
-      
-      await addFamilyMemberApi({
+      const payload = {
         fullName: form.name,
         relationship: form.relation.toLowerCase(),
         dob: dobString,
         gender: form.gender,
-      });
+        phone: form.phone || undefined,
+        bloodGroup: form.bloodGroup || undefined,
+      };
 
-      setForm({ name: "", relation: "Spouse", age: "", gender: "Female", abha: "" });
+      if (editingId) {
+        await updateFamilyMemberApi(editingId, payload);
+      } else {
+        await addFamilyMemberApi(payload);
+      }
+
+      setForm(emptyForm);
+      setEditingId(null);
       setShowForm(false);
       refetch();
     } catch (err) {
-      console.error("Failed to add family member:", err);
+      console.error("Failed to save family member:", err);
     } finally {
       setSubmitting(false);
     }
@@ -78,18 +104,18 @@ export default function FamilyProfilesPage() {
           </p>
         </div>
         <button
-          onClick={() => setShowForm(true)}
+          onClick={openAddForm}
           className="px-4 py-2.5 bg-herb-green text-white text-sm font-semibold rounded-xl hover:bg-herb-green/90 transition-all"
         >
           + Add Member
         </button>
       </div>
 
-      {/* Add member form */}
+      {/* Add/edit member form */}
       {showForm && (
         <div className="bg-white rounded-2xl border border-herb-green/20 p-5 mb-6 shadow-sm">
-          <h3 className="font-semibold text-foreground text-sm mb-4">New Family Member</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+          <h3 className="font-semibold text-foreground text-sm mb-4">{editingId ? "Edit Family Member" : "New Family Member"}</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1.5">Full Name *</label>
               <input
@@ -97,7 +123,7 @@ export default function FamilyProfilesPage() {
                 value={form.name}
                 onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
                 placeholder="e.g. Priya Kumar"
-                className="w-full text-sm border border-border rounded-xl px-3 py-2.5 focus:outline-none focus:border-herb-green/50"
+                className="w-full text-sm border border-border rounded-lg px-3 py-1.5 focus:outline-none focus:border-herb-green/50"
               />
             </div>
             <div>
@@ -105,7 +131,7 @@ export default function FamilyProfilesPage() {
               <select
                 value={form.relation}
                 onChange={(e) => setForm((p) => ({ ...p, relation: e.target.value as Relation }))}
-                className="w-full text-sm border border-border rounded-xl px-3 py-2.5 focus:outline-none focus:border-herb-green/50 bg-white"
+                className="w-full text-sm border border-border rounded-lg px-3 py-1.5 focus:outline-none focus:border-herb-green/50 bg-white"
               >
                 {RELATIONS.map((r) => <option key={r}>{r}</option>)}
               </select>
@@ -117,7 +143,7 @@ export default function FamilyProfilesPage() {
                 value={form.age}
                 onChange={(e) => setForm((p) => ({ ...p, age: e.target.value }))}
                 placeholder="Age in years"
-                className="w-full text-sm border border-border rounded-xl px-3 py-2.5 focus:outline-none focus:border-herb-green/50"
+                className="w-full text-sm border border-border rounded-lg px-3 py-1.5 focus:outline-none focus:border-herb-green/50"
               />
             </div>
             <div>
@@ -125,37 +151,47 @@ export default function FamilyProfilesPage() {
               <select
                 value={form.gender}
                 onChange={(e) => setForm((p) => ({ ...p, gender: e.target.value }))}
-                className="w-full text-sm border border-border rounded-xl px-3 py-2.5 focus:outline-none focus:border-herb-green/50 bg-white"
+                className="w-full text-sm border border-border rounded-lg px-3 py-1.5 focus:outline-none focus:border-herb-green/50 bg-white"
               >
                 {["Female", "Male", "Other", "Prefer not to say"].map((g) => <option key={g}>{g}</option>)}
               </select>
             </div>
-            <div className="sm:col-span-2">
-              <label className="text-xs font-medium text-muted-foreground block mb-1.5">ABHA ID (optional)</label>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1.5">Phone Number</label>
               <input
-                type="text"
-                value={form.abha}
-                onChange={(e) => setForm((p) => ({ ...p, abha: e.target.value }))}
-                placeholder="e.g. priya@abha"
-                className="w-full text-sm border border-border rounded-xl px-3 py-2.5 focus:outline-none focus:border-herb-green/50"
+                type="tel"
+                value={form.phone}
+                onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))}
+                placeholder="e.g. 9876543210"
+                className="w-full text-sm border border-border rounded-lg px-3 py-1.5 focus:outline-none focus:border-herb-green/50"
               />
-              <p className="text-[10px] text-muted-foreground mt-1">Linking ABHA enables health record access across facilities</p>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1.5">Blood Group</label>
+              <select
+                value={form.bloodGroup}
+                onChange={(e) => setForm((p) => ({ ...p, bloodGroup: e.target.value }))}
+                className="w-full text-sm border border-border rounded-lg px-3 py-1.5 focus:outline-none focus:border-herb-green/50 bg-white"
+              >
+                <option value="">Select</option>
+                {BLOOD_GROUPS.map((bg) => <option key={bg}>{bg}</option>)}
+              </select>
             </div>
           </div>
           <div className="flex gap-2">
             <button
-              onClick={handleAdd}
+              onClick={handleSubmit}
               disabled={!form.name || !form.age || submitting}
               className={cn(
-                "flex-1 py-2.5 text-sm font-semibold rounded-xl transition-all",
+                "px-6 py-2 text-xs font-semibold rounded-lg transition-all",
                 form.name && form.age && !submitting ? "bg-herb-green text-white hover:bg-herb-green/90" : "bg-muted text-muted-foreground cursor-not-allowed"
               )}
             >
-              {submitting ? "Adding..." : "Add Profile"}
+              {submitting ? (editingId ? "Saving..." : "Adding...") : editingId ? "Save Changes" : "Add Profile"}
             </button>
             <button
-              onClick={() => setShowForm(false)}
-              className="px-5 py-2.5 border border-border text-sm font-medium rounded-xl hover:bg-muted transition-colors text-muted-foreground"
+              onClick={() => { setShowForm(false); setEditingId(null); }}
+              className="px-4 py-2 border border-border text-xs font-medium rounded-lg hover:bg-muted transition-colors text-muted-foreground"
             >
               Cancel
             </button>
@@ -197,29 +233,10 @@ export default function FamilyProfilesPage() {
                 </button>
               </div>
 
-              {/* ABHA + Prakriti */}
-              <div className="space-y-2 mb-4">
-                {member.abhaId ? (
-                  <p className="text-xs text-herb-green">ABHA ✓ · {member.abhaId}</p>
-                ) : (
-                  <p className="text-xs text-amber-600">ABHA not linked</p>
-                )}
-                {member.prakriti && (
-                  <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full inline-block", DOSHA_COLOR[member.prakriti] ?? "bg-muted text-muted-foreground")}>
-                    {member.prakriti} Prakriti
-                  </span>
-                )}
-              </div>
-
               {/* Actions */}
               <div className="flex gap-2">
-                <Link href="/discover" className="flex-1">
-                  <button className="w-full py-2 bg-herb-green text-white text-xs font-semibold rounded-xl hover:bg-herb-green/90 transition-all">
-                    Book Consult
-                  </button>
-                </Link>
-                <Link href="/records">
-                  <button className="px-3 py-2 border border-border rounded-xl text-xs font-medium text-muted-foreground hover:bg-muted transition-colors">
+                <Link href={`/records?familyMemberId=${member.id}`}>
+                  <button className="px-6 py-2 border border-border rounded-xl text-xs font-medium text-muted-foreground hover:bg-muted transition-colors">
                     Records
                   </button>
                 </Link>
@@ -228,14 +245,12 @@ export default function FamilyProfilesPage() {
               {/* Expanded menu */}
               {activeId === member.id && (
                 <div className="mt-3 pt-3 border-t border-border space-y-1">
-                  <button className="w-full text-left text-xs py-1.5 px-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors">
+                  <button
+                    onClick={() => openEditForm(member)}
+                    className="w-full text-left text-xs py-1.5 px-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors"
+                  >
                     Edit Profile
                   </button>
-                  {!member.abhaId && (
-                    <button className="w-full text-left text-xs py-1.5 px-2 text-herb-green hover:bg-herb-green/5 rounded-lg transition-colors">
-                      Link ABHA ID
-                    </button>
-                  )}
                   <button
                     onClick={() => handleRemove(member.id)}
                     className="w-full text-left text-xs py-1.5 px-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
@@ -254,7 +269,7 @@ export default function FamilyProfilesPage() {
               <p className="font-semibold text-foreground mt-3">No family profiles yet</p>
               <p className="text-xs text-muted-foreground mt-1 mb-4">Add family members to book consultations on their behalf</p>
               <button
-                onClick={() => setShowForm(true)}
+                onClick={openAddForm}
                 className="px-5 py-2.5 bg-herb-green text-white text-sm font-semibold rounded-xl hover:bg-herb-green/90"
               >
                 Add First Member

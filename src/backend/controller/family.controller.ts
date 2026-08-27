@@ -20,6 +20,9 @@ export class FamilyController {
       case "addFamilyMember":
         await FamilyService.addFamilyMember(authUser, payload.member);
         break;
+      case "updateFamilyMember":
+        await FamilyService.updateFamilyMember(authUser, payload.id, payload.member);
+        break;
       case "deleteFamilyMember":
         await FamilyService.deleteFamilyMember(authUser, payload.id);
         break;

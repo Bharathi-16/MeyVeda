@@ -22,8 +22,15 @@ export interface Practitioner {
   qualifications: string[];
   about: string;
   clinicFee?: number;
+  videoFee?: number;
   slotDuration?: number;
   bufferMin?: number;
+  specialties?: string[];
+  gender?: string;
+  state?: string;
+  city?: string;
+  clinicName?: string;
+  clinicAddress?: string;
 }
 
 export type ReviewRow = {

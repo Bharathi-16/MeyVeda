@@ -18,7 +18,7 @@ export type MedicineRow = {
   created_at?: string;
 };
 
-const MEDICINE_SELECT = "id, name, generic_name, brand, discipline, category, pharmacopoeia, standard_dose, dose_unit, is_controlled, is_active, price_paise, created_at";
+const MEDICINE_SELECT = "id, name, generic_name, brand, discipline, category, pharmacopoeia, standard_dose, standard_dose_min, standard_dose_max, dose_unit, is_controlled, is_active, price_paise, created_at";
 
 export class MedicineRepository {
   static async search(search?: string): Promise<MedicineRow[]> {
@@ -39,6 +39,29 @@ export class MedicineRepository {
       throw new Error("Failed to fetch medicines from database");
     }
     return data as MedicineRow[];
+  }
+
+  /** Looks up price_paise for a set of medicine names (case-insensitive). Returns a name -> price_paise map. */
+  static async getPricesByNames(names: string[]): Promise<Record<string, number>> {
+    const uniqueNames = Array.from(new Set(names.filter(Boolean)));
+    if (uniqueNames.length === 0) return {};
+
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("medicines")
+      .select("name, price_paise")
+      .or(uniqueNames.map((n) => `name.ilike.${n.replace(/[%,]/g, "")}`).join(","));
+
+    if (error) {
+      console.error("[MedicineRepository] Error fetching medicine prices:", error.message);
+      return {};
+    }
+
+    const priceMap: Record<string, number> = {};
+    for (const row of data || []) {
+      priceMap[row.name.toLowerCase()] = row.price_paise ?? 0;
+    }
+    return priceMap;
   }
 
   static async getAll(): Promise<MedicineRow[]> {

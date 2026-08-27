@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { PrescriptionService } from "../service/prescription.service";
 import { requireAuth } from "@/shared/auth/require-auth";
 import { AppError } from "@/shared/api/api-error";
+import { writeAuditLog } from "@/shared/security/audit-log";
+import { getRequestIp, getRequestUserAgent } from "@/shared/security/request-meta";
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Internal server error";
@@ -26,7 +28,17 @@ export async function deletePrescriptionController(
   try {
     const authUser = await requireAuth(req);
     const { id } = await context.params;
-    await PrescriptionService.deletePrescription(authUser, id);
+    const { patientId } = await PrescriptionService.deletePrescription(authUser, id);
+    await writeAuditLog({
+      userId: authUser.id,
+      role: authUser.role,
+      action: "delete_prescription",
+      module: "prescriptions",
+      recordId: id,
+      patientId,
+      ipAddress: getRequestIp(req),
+      userAgent: getRequestUserAgent(req),
+    });
     return NextResponse.json({ success: true, message: "Prescription deleted successfully" });
   } catch (error: unknown) {
     console.error("deletePrescriptionController error:", error);

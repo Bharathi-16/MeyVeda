@@ -9,9 +9,12 @@ import {
   type AppointmentVideoRow,
   type AppointmentVideoStatus,
 } from "../repo/appointments.repo";
+import { EmailService } from "./email.service";
 
 import type { AuthUser } from "@/shared/auth/auth.types";
+import { resolveActingPractitionerUserId } from "@/shared/auth/resolve-practitioner-context";
 import { AppError } from "@/shared/api/api-error";
+import { resolveActiveFeeRupees } from "@/lib/fee";
 
 /* -------------------------------------------------------------------------- */
 /*                                   Types                                    */
@@ -37,8 +40,10 @@ export type AppointmentRow = {
   specialty: string;
   date: string;
   dateRaw: string;
+  timeRaw: string;
   mode: AppointmentMode;
   status: "upcoming" | "past" | "cancelled";
+  pastOutcome?: "completed" | "missed";
   fee: string;
   duration?: string;
   rating?: number;
@@ -143,7 +148,7 @@ function isPatientRole(authUser: AuthUser): boolean {
 function isPractitionerRole(authUser: AuthUser): boolean {
   const role = getRole(authUser);
 
-  return role === "doctor" || role === "practitioner";
+  return role === "doctor" || role === "practitioner" || role === "assistant";
 }
 
 function isAdminRole(authUser: AuthUser): boolean {
@@ -219,6 +224,20 @@ function formatTime(timeStr?: string | null): string {
     .padStart(2, "0")}:${minutePart} ${period}`;
 }
 
+function formatDisplayDate(dateStr?: string | null): string {
+  if (!dateStr) return "";
+  return new Date(`${dateStr}T00:00:00`).toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function formatFee(feePaise: number | null): string | undefined {
+  if (feePaise === null || feePaise === undefined) return undefined;
+  return `₹${Math.round(feePaise / 100)}`;
+}
+
 /* -------------------------------------------------------------------------- */
 /*                               Service class                                */
 /* -------------------------------------------------------------------------- */
@@ -249,7 +268,7 @@ export class AppointmentsService {
     } else if (isPractitionerRole(authUser)) {
       const practitionerId =
         await AppointmentsRepository.getPractitionerIdFromUserId(
-          authUser.id,
+          await resolveActingPractitionerUserId(authUser),
         );
 
       if (!practitionerId) {
@@ -310,6 +329,25 @@ export class AppointmentsService {
         reasonForVisit,
       );
 
+    const emailDetails =
+      await AppointmentsRepository.getAppointmentEmailDetails(
+        appointment.id,
+      );
+
+    if (emailDetails) {
+      await EmailService.sendAppointmentBooked(
+        emailDetails.patientEmail,
+        {
+          patientName: emailDetails.patientName,
+          practitionerName: emailDetails.practitionerName,
+          date: formatDisplayDate(emailDetails.scheduledDate),
+          time: formatTime(emailDetails.scheduledTime),
+          mode: emailDetails.mode === "clinic" ? "clinic" : "video",
+          fee: formatFee(emailDetails.feePaise),
+        },
+      );
+    }
+
     return {
       id: appointment.id,
     };
@@ -369,7 +407,7 @@ export class AppointmentsService {
     } else if (isPractitionerRole(authUser)) {
       const practitionerId =
         await AppointmentsRepository.getPractitionerIdFromUserId(
-          authUser.id,
+          await resolveActingPractitionerUserId(authUser),
         );
 
       authorized =
@@ -384,10 +422,52 @@ export class AppointmentsService {
       );
     }
 
+    const emailDetails =
+      await AppointmentsRepository.getAppointmentEmailDetails(
+        appointmentId,
+      );
+
+    // The cancellation itself is the operation the caller is waiting on —
+    // it must succeed or fail on its own. Everything below is a best-effort
+    // side effect (notify/email); a transient failure there must not report
+    // the cancellation itself as failed once the DB write above succeeded.
     await AppointmentsRepository.cancelAppointment(
       appointmentId,
       reason.trim(),
     );
+
+    if (isPatientRole(authUser)) {
+      try {
+        await AppointmentsRepository.notifyPractitionerOfCancellation(
+          appointmentId,
+        );
+      } catch (err) {
+        console.error(
+          "Failed to notify practitioner of cancellation:",
+          err,
+        );
+      }
+    }
+
+    if (emailDetails) {
+      try {
+        await EmailService.sendAppointmentCancelled(
+          emailDetails.patientEmail,
+          {
+            patientName: emailDetails.patientName,
+            practitionerName: emailDetails.practitionerName,
+            date: formatDisplayDate(emailDetails.scheduledDate),
+            time: formatTime(emailDetails.scheduledTime),
+            reason: reason.trim(),
+          },
+        );
+      } catch (err) {
+        console.error(
+          "Failed to send cancellation email:",
+          err,
+        );
+      }
+    }
   }
 
   /* ------------------------------------------------------------------------ */
@@ -454,7 +534,7 @@ export class AppointmentsService {
     if (isPractitionerRole(authUser)) {
       const practitionerId =
         await AppointmentsRepository.getPractitionerIdFromUserId(
-          authUser.id,
+          await resolveActingPractitionerUserId(authUser),
         );
 
       if (
@@ -668,13 +748,14 @@ export class AppointmentsService {
         ...(practitioner?.disciplines ?? []),
       ];
 
-      const slot = getFirst(row.slot);
-
-      const fee =
-        slot?.fee !== null &&
-        slot?.fee !== undefined
-          ? `₹${Math.round(slot.fee / 100)}`
-          : "—";
+      // Always the doctor's *current* consultation fee, not whatever the
+      // slot happened to cost at booking time — so a patient sees the same
+      // fee here as on the doctor's profile, even after the doctor changes
+      // their rate.
+      const fee = `₹${resolveActiveFeeRupees(
+        practitioner?.base_video_fee,
+        practitioner?.base_clinic_fee,
+      )}`;
 
       const appointmentDate = new Date(
         `${row.scheduled_date}T${
@@ -703,14 +784,31 @@ export class AppointmentsService {
         | "upcoming"
         | "past"
         | "cancelled" = "upcoming";
+      let pastOutcome:
+        | "completed"
+        | "missed"
+        | undefined;
 
-      if (row.status === "completed") {
-        uiStatus = "past";
-      } else if (
-        row.status === "cancelled" ||
-        row.status === "no_show"
-      ) {
+      // "Missed" is derived from the scheduled window (start + duration),
+      // not just the start time, so a slot in progress never flashes as
+      // missed. Deriving it from immutable stored fields (date/time/
+      // duration/status) instead of a separate write keeps it stable
+      // across refreshes even before the async no_show job runs.
+      const scheduledEndTime =
+        appointmentDate.getTime() +
+        (row.duration_min ?? 30) * 60_000;
+
+      if (row.status === "cancelled") {
         uiStatus = "cancelled";
+      } else if (row.status === "completed") {
+        uiStatus = "past";
+        pastOutcome = "completed";
+      } else if (
+        row.status === "no_show" ||
+        scheduledEndTime < Date.now()
+      ) {
+        uiStatus = "past";
+        pastOutcome = "missed";
       }
 
       const consultation = getFirst(
@@ -734,8 +832,10 @@ export class AppointmentsService {
           specialties.join(" · ") || "AYUSH",
         date: dateText,
         dateRaw: row.scheduled_date,
+        timeRaw: row.scheduled_time || "00:00:00",
         mode,
         status: uiStatus,
+        pastOutcome,
         fee,
         duration: row.duration_min
           ? `${row.duration_min} min`

@@ -2,6 +2,7 @@ import "server-only";
 
 import { MessageRepository, type MessageRow } from "../repo/message.repo";
 import { AuthUser } from "@/shared/auth/auth.types";
+import { resolveActingPractitionerUserId } from "@/shared/auth/resolve-practitioner-context";
 import { ForbiddenError, AppError } from "@/shared/api/api-error";
 
 async function assertParticipant(authUser: AuthUser, consultationId: string): Promise<"patient" | "practitioner"> {
@@ -18,8 +19,14 @@ async function assertParticipant(authUser: AuthUser, consultationId: string): Pr
     return "patient";
   }
 
-  if (authUser.role === "doctor" || (authUser.role as string) === "practitioner") {
-    const practitionerId = await MessageRepository.getPractitionerIdFromUserId(authUser.id);
+  if (
+    authUser.role === "doctor" ||
+    (authUser.role as string) === "practitioner" ||
+    authUser.role === "assistant"
+  ) {
+    const practitionerId = await MessageRepository.getPractitionerIdFromUserId(
+      await resolveActingPractitionerUserId(authUser)
+    );
     if (!practitionerId || consultation.practitioner_id !== practitionerId) {
       throw new ForbiddenError("You are not authorized to access this conversation");
     }

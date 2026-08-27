@@ -53,6 +53,7 @@ async function bookNewDoctorAppointment(params: {
 import { formatCurrency, cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import { toast } from "react-hot-toast";
+import { ENABLE_VIDEO_CONSULTATION } from "@/lib/feature-flags";
 
 type Step = "configure" | "payment" | "confirmed";
 
@@ -86,7 +87,9 @@ function BookingContent() {
   const familyMembers = rawFamilyMembers ?? [];
 
   const [step, setStep] = useState<Step>("configure");
-  const [consultMode, setConsultMode] = useState<"video" | "clinic">(mode);
+  const [consultMode, setConsultMode] = useState<"video" | "clinic">(
+    ENABLE_VIDEO_CONSULTATION ? mode : "clinic"
+  );
   const [selectedPatient, setSelectedPatient] = useState("self");
   const [selectedFamilyMemberId, setSelectedFamilyMemberId] = useState<string | null>(null);
   const [reason, setReason] = useState("");
@@ -108,6 +111,7 @@ function BookingContent() {
         id: newDocQuery.data.id,
         name: newDocQuery.data.full_name,
         specialty: newDocQuery.data.specializations?.[0] || "Ayurveda",
+        specialties: newDocQuery.data.specializations || [],
         hprId: newDocQuery.data.verifications?.[0]?.hpr_id || "HPR-PENDING",
         fee: Math.round((newDocQuery.data.consultation_fee ?? 0) / 100),
         avatar: newDocQuery.data.full_name?.split(" ").filter(Boolean).map((n: string) => n[0]).join("").slice(0, 2).toUpperCase() || "DR",
@@ -129,9 +133,11 @@ function BookingContent() {
     month: "long",
   });
 
-  const gst = Math.round(doctor.fee * 0.18);
-  const convFee = 18;
-  const total = doctor.fee + gst + convFee;
+  const total = doctor.fee;
+  const doctorSpecialties =
+    "specialties" in doctor && doctor.specialties && doctor.specialties.length > 0
+      ? doctor.specialties.join(" · ")
+      : doctor.specialty;
 
   async function handlePayNow() {
     if (!user?.id || !doctor) {
@@ -212,14 +218,16 @@ function BookingContent() {
             </div>
             <div>
               <p className="text-sm font-semibold text-foreground">{doctor.name}</p>
-              <p className="text-xs text-muted-foreground">{doctor.specialty}</p>
+              <p className="text-xs text-muted-foreground">{doctorSpecialties}</p>
             </div>
           </div>
           {[
             ["Date", dateLabel],
             ["Time", slot],
-            ["Mode", consultMode === "video" ? "📹 Video Consultation" : "🏥 In-Clinic"],
-            ["Amount Paid", formatCurrency(total)],
+            ...(ENABLE_VIDEO_CONSULTATION
+              ? [["Mode", consultMode === "video" ? "📹 Video Consultation" : "🏥 In-Clinic"]]
+              : []),
+            ...(ENABLE_VIDEO_CONSULTATION ? [["Amount Paid", formatCurrency(total)]] : []),
           ].map(([label, value]) => (
             <div key={label} className="flex justify-between text-sm">
               <span className="text-muted-foreground">{label}</span>
@@ -260,7 +268,7 @@ function BookingContent() {
       <div className="flex items-center gap-3 mb-6">
         {[
           { id: "configure", label: "Configure" },
-          { id: "payment", label: "Payment" },
+          ...(ENABLE_VIDEO_CONSULTATION ? [{ id: "payment", label: "Payment" }] : []),
         ].map((s, i) => (
           <div key={s.id} className="flex items-center gap-3">
             <div className="flex items-center gap-2">
@@ -295,7 +303,7 @@ function BookingContent() {
                 </div>
                 <div className="flex-1">
                   <p className="font-semibold text-foreground">{doctor.name}</p>
-                  <p className="text-sm text-muted-foreground">{doctor.specialty}</p>
+                  <p className="text-sm text-muted-foreground">{doctorSpecialties}</p>
                   <HPRBadge hprId={doctor.hprId} className="mt-1.5" />
                   <p className="text-xs text-herb-green mt-1 font-medium">
                     📅 {dateLabel} · {slot} · {consultMode === "video" ? "📹 Video" : "🏥 Clinic"}
@@ -304,6 +312,7 @@ function BookingContent() {
               </div>
 
               {/* Mode — only show toggle if practitioner offers BOTH modes */}
+              {ENABLE_VIDEO_CONSULTATION && (
               <div className="bg-white rounded-2xl border border-border p-5">
                 <h3 className="font-semibold text-foreground text-sm mb-3">Consultation Mode</h3>
                 {availableModes.length > 1 ? (
@@ -339,6 +348,7 @@ function BookingContent() {
                   </div>
                 )}
               </div>
+              )}
 
               {/* Patient */}
               <div className="bg-white rounded-2xl border border-border p-5">
@@ -455,21 +465,32 @@ function BookingContent() {
                     return;
                   }
 
-                  setStep("payment");
+                  if (ENABLE_VIDEO_CONSULTATION) {
+                    setStep("payment");
+                  } else {
+                    // Phase 1: payment is collected in-clinic, so booking
+                    // confirms directly instead of routing through payment.
+                    handlePayNow();
+                  }
                 }}
                 disabled={
+                  isProcessing ||
                   (selectedPatient === "family" &&
                     (!selectedFamilyMemberId ||
                       familyMembers.length === 0))
                 }
-                className="w-full py-3.5 bg-herb-green text-white rounded-xl text-sm font-semibold hover:bg-herb-green/90 transition-all active:scale-95 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full py-3 bg-herb-green text-white rounded-xl text-sm font-semibold hover:bg-herb-green/90 transition-all active:scale-95 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Continue to Payment
+                {ENABLE_VIDEO_CONSULTATION
+                  ? "Continue to Payment"
+                  : isProcessing
+                    ? "Booking…"
+                    : "Book Appointment"}
               </button>
             </>
           )}
 
-          {step === "payment" && (
+          {ENABLE_VIDEO_CONSULTATION && step === "payment" && (
             <>
               <div className="bg-white rounded-2xl border border-border p-5">
                 <h3 className="font-semibold text-foreground text-sm mb-4">Select Payment Method</h3>
@@ -527,8 +548,6 @@ function BookingContent() {
             <div className="space-y-2">
               {[
                 ["Consultation Fee", formatCurrency(doctor.fee)],
-                ["GST (18%)", formatCurrency(gst)],
-                ["Convenience Fee", formatCurrency(convFee)],
               ].map(([label, value]) => (
                 <div key={label} className="flex justify-between text-xs text-muted-foreground">
                   <span>{label}</span>
@@ -540,9 +559,6 @@ function BookingContent() {
               <span className="text-sm">Total</span>
               <span className="text-herb-green">{formatCurrency(total)}</span>
             </div>
-            <p className="text-[10px] text-muted-foreground mt-3 text-center">
-              Secure payment · 256-bit SSL encrypted
-            </p>
           </div>
         </div>
       </div>

@@ -34,6 +34,9 @@ const DETAILED_CONSULTATION_SELECT = `
 export type SaveCompleteConsultationInput = {
   practitionerId: string;
   patientId: string;
+  /** The real booked appointment being consulted, if this consultation is
+   * completing an existing queue entry rather than an ad-hoc walk-in note. */
+  appointmentId?: string;
   visitReason?: string;
   chiefComplaints?: string[];
   presentIllness?: string;
@@ -44,6 +47,7 @@ export type SaveCompleteConsultationInput = {
   vikriti?: string;
   previousHistory?: string;
   previousCalls?: string;
+  paymentMethod?: "cash" | "online";
   vitals: {
     height?: string | number;
     weight?: string | number;
@@ -77,8 +81,8 @@ const CONSULTATION_REPORT_SELECT = `
   mode,
   appointment_id,
   practitioner_id,
-  patients ( full_name, date_of_birth, gender, prakriti, city, user:users(mobile, abha:abha_links(abha_id)) ),
-  practitioners ( id, full_name, specializations, qualifications, hpr_id ),
+  patients ( full_name, date_of_birth, gender, prakriti, city, user:users(mobile, email, abha:abha_links(abha_id)) ),
+  practitioners ( id, full_name, specializations, qualifications, hpr_id, base_video_fee ),
   emr_notes ( chief_complaint, history_present, assessment, objective_findings, plan ),
   prescriptions ( dietary_advice, lifestyle_advice, followup_date, prescription_items ( medicine_name, dose, frequency, anupana, duration_days, special_instructions, classical_type, time_of_intake ) )
 `;
@@ -114,6 +118,10 @@ export class ConsultationRepository {
     return data?.id ?? null;
   }
 
+  // `patientId` is already resolved to the right identity by the caller —
+  // either the account owner's own patients.id, or (for a family member)
+  // their own patients.id, since family members get real patients rows of
+  // their own. No family_member_id filtering needed here.
   static async getDetailedConsultationsForPatient(patientId: string): Promise<any[]> {
     const supabase = await createClient();
     const { data, error } = await supabase
@@ -126,6 +134,7 @@ export class ConsultationRepository {
       console.error("[ConsultationRepository] Error fetching detailed consultations:", error.message);
       throw new Error("Failed to fetch consultations from database");
     }
+
     return data ?? [];
   }
 
@@ -173,44 +182,78 @@ export class ConsultationRepository {
     return data?.id ?? id;
   }
 
-  static async saveCompleteConsultation(payload: SaveCompleteConsultationInput): Promise<void> {
+  static async saveCompleteConsultation(payload: SaveCompleteConsultationInput): Promise<{ consultationId: string; prescriptionId: string; patientId: string }> {
     const supabase = await createClient();
     const practId = await this.resolvePractitionerId(payload.practitionerId);
     const patId = await this.resolvePatientId(payload.patientId);
 
-    // 1. Create a mock slot to satisfy foreign keys
-    const { data: slot, error: slotErr } = await supabase
-      .from("slots")
-      .insert({
-        practitioner_id: practId,
-        mode: "video",
-        slot_date: new Date().toISOString().split("T")[0],
-        start_time: "10:00:00",
-        end_time: "10:30:00",
-        fee: 0,
-        status: "completed",
-      })
-      .select("id")
-      .single();
+    // 1 & 2. Resolve the appointment being consulted.
+    // If this consultation is completing a real booked appointment (the doctor
+    // clicked "Consult" from their queue), reuse it and mark it completed so
+    // its original scheduled date/time is preserved everywhere it's displayed
+    // — instead of fabricating a brand-new appointment at a mock time.
+    let apt: { id: string } | null = null;
 
-    if (slotErr) throw new Error("Slot insertion failed: " + slotErr.message);
+    if (payload.appointmentId) {
+      const { data: existingAppt, error: fetchErr } = await supabase
+        .from("appointments")
+        .select("id")
+        .eq("id", payload.appointmentId)
+        .eq("practitioner_id", practId)
+        .eq("patient_id", patId)
+        .maybeSingle();
 
-    // 2. Create appointment
-    const { data: apt, error: aptErr } = await supabase
-      .from("appointments")
-      .insert({
-        slot_id: slot.id,
-        practitioner_id: practId,
-        patient_id: patId,
-        mode: "video",
-        status: "completed",
-        scheduled_date: new Date().toISOString().split("T")[0],
-        scheduled_time: "10:00:00",
-      })
-      .select("id")
-      .single();
+      if (fetchErr) {
+        console.error("[ConsultationRepository] Error looking up existing appointment:", fetchErr.message);
+      }
 
-    if (aptErr) throw new Error("Appointment insertion failed: " + aptErr.message);
+      if (existingAppt) {
+        const { error: updateErr } = await supabase
+          .from("appointments")
+          .update({ status: "completed" })
+          .eq("id", existingAppt.id);
+
+        if (updateErr) throw new Error("Appointment update failed: " + updateErr.message);
+        apt = existingAppt;
+      }
+    }
+
+    if (!apt) {
+      // Fallback for ad-hoc records with no real booked appointment (e.g. walk-ins):
+      // synthesize a same-day slot + appointment to satisfy foreign keys.
+      const { data: slot, error: slotErr } = await supabase
+        .from("slots")
+        .insert({
+          practitioner_id: practId,
+          mode: "video",
+          slot_date: new Date().toISOString().split("T")[0],
+          start_time: "10:00:00",
+          end_time: "10:30:00",
+          fee: 0,
+          status: "completed",
+        })
+        .select("id")
+        .single();
+
+      if (slotErr) throw new Error("Slot insertion failed: " + slotErr.message);
+
+      const { data: newAppt, error: aptErr } = await supabase
+        .from("appointments")
+        .insert({
+          slot_id: slot.id,
+          practitioner_id: practId,
+          patient_id: patId,
+          mode: "video",
+          status: "completed",
+          scheduled_date: new Date().toISOString().split("T")[0],
+          scheduled_time: "10:00:00",
+        })
+        .select("id")
+        .single();
+
+      if (aptErr) throw new Error("Appointment insertion failed: " + aptErr.message);
+      apt = newAppt;
+    }
 
     // 3. Create consultation
     const { data: consult, error: consultErr } = await supabase
@@ -245,6 +288,7 @@ export class ConsultationRepository {
           visitReason: payload.visitReason,
           previousHistory: payload.previousHistory,
           previousCalls: payload.previousCalls,
+          paymentMethod: payload.paymentMethod,
         }),
         objective_findings: JSON.stringify({
           vitals: payload.vitals,
@@ -313,6 +357,18 @@ export class ConsultationRepository {
           address: addressVal,
         })
         .eq("user_id", patRow.user_id);
+    } else {
+      // Family members have no `user_id`/`patient_profiles` row — the doctor's
+      // save is the only place their height/weight/blood group ever get
+      // recorded, so mirror it onto their family_members row too.
+      await supabase
+        .from("family_members")
+        .update({
+          height: heightVal,
+          weight: weightVal,
+          blood_group: bloodGroupVal,
+        })
+        .eq("patient_id", patId);
     }
 
     // 5. Create prescription
@@ -365,51 +421,69 @@ export class ConsultationRepository {
         const mod = match[3]?.toLowerCase();
         if (mod === 'pm' && hour < 12) hour += 12;
         if (mod === 'am' && hour === 12) hour = 0;
-        
+
         const endHourVal = hour + (min + 30 >= 60 ? 1 : 0);
         const endMinVal = (min + 30) % 60;
-        
+
         const hourStr = String(hour).padStart(2, '0');
         const minStr = String(min).padStart(2, '0');
         const endHourStr = String(endHourVal).padStart(2, '0');
         const endMinStr = String(endMinVal).padStart(2, '0');
-      
-      const { data: futureSlot, error: futureSlotErr } = await supabase
-        .from("slots")
-        .insert({
-          practitioner_id: practId,
-          mode: payload.upcomingCallMode || "video",
-          slot_date: payload.upcomingCallDate,
-          start_time: `${hourStr}:${minStr}:00`,
-          end_time: `${endHourStr}:${endMinStr}:00`,
-          fee: 0,
-          status: "booked", // prevent others from booking
-        })
-        .select("id")
-        .single();
-        
-      if (!futureSlotErr && futureSlot) {
-        const { data: futureAppt, error: futureApptErr } = await supabase
+        const scheduledTime = `${hourStr}:${minStr}:00`;
+
+        // Guard against duplicate bookings: skip if this doctor already has a
+        // non-cancelled appointment at this exact date/time (e.g. the consultation
+        // was saved more than once with the same upcoming call selected).
+        const { data: existingAppt } = await supabase
           .from("appointments")
-          .insert({
-            slot_id: futureSlot.id,
-            practitioner_id: practId,
-            patient_id: patId,
-            mode: payload.upcomingCallMode || "video",
-            status: "scheduled",
-            scheduled_date: payload.upcomingCallDate,
-            scheduled_time: `${hourStr}:${minStr}:00`,
-          })
           .select("id")
-          .single();
-          
-        if (!futureApptErr && futureAppt) {
-          // Appointments are successfully created. 
-          // Notifications are handled by the frontend injecting them based on prescriptions text prefix.
-        }
+          .eq("practitioner_id", practId)
+          .eq("scheduled_date", payload.upcomingCallDate)
+          .eq("scheduled_time", scheduledTime)
+          .neq("status", "cancelled")
+          .maybeSingle();
+
+        if (!existingAppt) {
+          const { data: futureSlot, error: futureSlotErr } = await supabase
+            .from("slots")
+            .insert({
+              practitioner_id: practId,
+              mode: payload.upcomingCallMode || "video",
+              slot_date: payload.upcomingCallDate,
+              start_time: scheduledTime,
+              end_time: `${endHourStr}:${endMinStr}:00`,
+              fee: 0,
+              status: "booked", // prevent others from booking
+            })
+            .select("id")
+            .single();
+
+          if (!futureSlotErr && futureSlot) {
+            const { data: futureAppt, error: futureApptErr } = await supabase
+              .from("appointments")
+              .insert({
+                slot_id: futureSlot.id,
+                practitioner_id: practId,
+                doctor_profile_id: practId,
+                patient_id: patId,
+                mode: payload.upcomingCallMode || "video",
+                status: "scheduled",
+                scheduled_date: payload.upcomingCallDate,
+                scheduled_time: scheduledTime,
+              })
+              .select("id")
+              .single();
+
+            if (!futureApptErr && futureAppt) {
+              // Appointments are successfully created.
+              // Notifications are handled by the frontend injecting them based on prescriptions text prefix.
+            }
+          }
         }
       }
     }
+
+    return { consultationId: consult.id, prescriptionId: rx.id, patientId: patId };
   }
 
   static async getUpcomingCallsForPatient(patientId: string): Promise<any[]> {
@@ -440,19 +514,52 @@ export class ConsultationRepository {
       throw new Error("Failed to fetch upcoming calls from database");
     }
 
+    // Family members have no `users` row (no login), so their phone lives on
+    // family_members instead — look it up by patient_id, same as elsewhere.
+    const patientIds = Array.from(new Set((data ?? []).map((r: any) => r.patient?.id).filter(Boolean)));
+    const phoneByPatientId: Record<string, string> = {};
+    if (patientIds.length > 0) {
+      const { data: familyMembers } = await supabase
+        .from("family_members")
+        .select("patient_id, phone")
+        .in("patient_id", patientIds);
+      for (const fm of familyMembers ?? []) {
+        if (fm.patient_id && fm.phone) phoneByPatientId[fm.patient_id] = fm.phone;
+      }
+    }
+
+    const get24H = (t: string) => {
+      const match = t.match(/(\d+):(\d+)\s*(am|pm)?/i);
+      if (!match) return "00:00:00";
+      let h = parseInt(match[1]);
+      const m = match[2];
+      const mod = match[3]?.toLowerCase();
+      if (mod === 'pm' && h < 12) h += 12;
+      if (mod === 'am' && h === 12) h = 0;
+      return `${h.toString().padStart(2, '0')}:${m}:00`;
+    };
+
     const upcomingCalls: any[] = [];
 
     (data || []).forEach((rx: any) => {
       const match = rx.lifestyle_advice?.match(/\[Upcoming Session Fixed: (.*?) at (.*?)\]/);
       if (match) {
+        const date = match[1];
+        const time = match[2];
+        const sessionTime = new Date(`${date}T${get24H(time)}`).getTime();
+        // A fixed session with no parseable date should still surface (better to
+        // show it than silently drop it), but once its scheduled time has
+        // actually passed it's stale and must not keep appearing as "upcoming".
+        if (!isNaN(sessionTime) && sessionTime < Date.now()) return;
+
         upcomingCalls.push({
           id: rx.id,
           createdAt: rx.created_at,
-          date: match[1],
-          time: match[2],
+          date,
+          time,
           patientId: rx.patient?.id,
           patientName: rx.patient?.full_name || "Unknown",
-          patientPhone: rx.patient?.user?.mobile || "",
+          patientPhone: (rx.patient?.id && phoneByPatientId[rx.patient.id]) || rx.patient?.user?.mobile || "",
           practitionerId: rx.practitioner?.id,
           practitionerName: rx.practitioner?.full_name || "Unknown",
         });
@@ -461,16 +568,6 @@ export class ConsultationRepository {
 
     return upcomingCalls
       .sort((a, b) => {
-        const get24H = (t: string) => {
-          const match = t.match(/(\d+):(\d+)\s*(am|pm)?/i);
-          if (!match) return "00:00:00";
-          let h = parseInt(match[1]);
-          const m = match[2];
-          const mod = match[3]?.toLowerCase();
-          if (mod === 'pm' && h < 12) h += 12;
-          if (mod === 'am' && h === 12) h = 0;
-          return `${h.toString().padStart(2, '0')}:${m}:00`;
-        };
         const dateA = new Date(`${a.date}T${get24H(a.time)}`).getTime();
         const dateB = new Date(`${b.date}T${get24H(b.time)}`).getTime();
         return (isNaN(dateA) ? 0 : dateA) - (isNaN(dateB) ? 0 : dateB);
@@ -478,33 +575,24 @@ export class ConsultationRepository {
       .map((call) => {
         let displayTime = call.time;
         if (!displayTime.toLowerCase().includes("am") && !displayTime.toLowerCase().includes("pm")) {
-           const match = displayTime.match(/(\d+):(\d+)/);
-           if (match) {
-             let h = parseInt(match[1]);
-             const m = match[2];
-             const mod = h >= 12 ? 'PM' : 'AM';
-             h = h % 12 || 12;
-             displayTime = `${h}:${m} ${mod}`;
-           }
+          const match = displayTime.match(/(\d+):(\d+)/);
+          if (match) {
+            let h = parseInt(match[1]);
+            const m = match[2];
+            const mod = h >= 12 ? 'PM' : 'AM';
+            h = h % 12 || 12;
+            displayTime = `${h}:${m} ${mod}`;
+          }
         }
-        
+
         let displayDate = call.date;
         try {
           const d = new Date(call.date);
           if (!isNaN(d.getTime())) {
             displayDate = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
           }
-        } catch(e) {}
-        
-        const get24H = (t: string) => {
-          const match = t.match(/(\d+):(\d+)\s*(am|pm)?/i);
-          if (!match) return "00:00:00";
-          let h = parseInt(match[1]);
-          if (match[3]?.toLowerCase() === 'pm' && h < 12) h += 12;
-          if (match[3]?.toLowerCase() === 'am' && h === 12) h = 0;
-          return `${h.toString().padStart(2, '0')}:${match[2]}:00`;
-        };
-        
+        } catch (e) { }
+
         return {
           ...call,
           date: displayDate, // Formatted e.g., 28 Jul 2026
@@ -515,7 +603,7 @@ export class ConsultationRepository {
       });
   }
 
-  static async getPatientIntakeDetails(id: string): Promise<any> {
+  static async getPatientIntakeDetails(id: string, appointmentId?: string | null): Promise<any> {
     const supabase = await createClient();
 
     let cleanId = id;
@@ -537,7 +625,6 @@ export class ConsultationRepository {
         full_name,
         date_of_birth,
         gender,
-        prakriti,
         user_id,
         height,
         weight,
@@ -585,29 +672,45 @@ export class ConsultationRepository {
       .order("scheduled_date", { ascending: false })
       .order("scheduled_time", { ascending: false });
 
-    const todayAppt = dbAppts?.find((a: any) => a.scheduled_date === today) || dbAppts?.[0];
+    const todayAppt = (appointmentId && dbAppts?.find((a: any) => a.id === appointmentId))
+      || dbAppts?.find((a: any) => a.scheduled_date === today)
+      || dbAppts?.[0];
 
+    // A family member has no `users` row of their own (they never sign in),
+    // so their contact number and declared relationship live on
+    // `family_members` instead — everything else (name, dob, gender, height,
+    // weight, blood group) is kept in sync on their own `patients` row by
+    // family.repo.ts, so it's read the same way as a self-registered patient.
+    const { data: familyMember } = await supabase
+      .from("family_members")
+      .select("relationship, phone")
+      .eq("patient_id", cleanId)
+      .maybeSingle();
+
+    const dob = dbPat.date_of_birth;
     let age = 0;
-    if (dbPat.date_of_birth) {
-      const birthDate = new Date(dbPat.date_of_birth);
+    if (dob) {
+      const birthDate = new Date(dob);
       age = new Date().getFullYear() - birthDate.getFullYear();
     }
 
+    const genderRaw = dbPat.gender;
+
     const patient = {
       name: dbPat.full_name || "Unknown",
+      relationship: familyMember?.relationship || null,
       age,
-      gender: dbPat.gender ? dbPat.gender.charAt(0).toUpperCase() + dbPat.gender.slice(1) : "Unknown",
-      phone: dbProfile?.phone || (Array.isArray(dbPat.user) ? dbPat.user[0]?.mobile : (dbPat.user as any)?.mobile) || "",
+      gender: genderRaw ? genderRaw.charAt(0).toUpperCase() + genderRaw.slice(1) : "Unknown",
+      phone: familyMember?.phone || dbProfile?.phone || (Array.isArray(dbPat.user) ? dbPat.user[0]?.mobile : (dbPat.user as any)?.mobile) || "",
       abha: dbAbha ? `${dbAbha.abha_id} (${dbAbha.abha_address || ""})` : null,
-      prakriti: dbPat.prakriti || "Vata-Pitta",
       reason: todayAppt?.reason_for_visit || "Routine check-up",
       mode: (todayAppt?.mode === "video" ? "video" : "clinic") as "video" | "clinic",
       time: todayAppt ? formatTime(todayAppt.scheduled_time) : "N/A",
       symptoms: todayAppt?.reason_for_visit ? [todayAppt.reason_for_visit] : [],
       duration: todayAppt ? "Scheduled" : "N/A",
-      height: dbProfile?.height || dbPat.height || 170,
-      weight: dbProfile?.weight || dbPat.weight || 70,
-      bloodGroup: dbProfile?.blood_group || dbPat.blood_group || "O+",
+      height: dbProfile?.height || dbPat.height || null,
+      weight: dbProfile?.weight || dbPat.weight || null,
+      bloodGroup: dbProfile?.blood_group || dbPat.blood_group || "",
       address: dbProfile?.address || dbPat.address || "Bangalore, India",
     };
 

@@ -3,7 +3,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HPRBadge } from "@/components/Badges";
 import { useQuery } from "@/hooks/useQuery";
 import { apiClient } from "@/shared/api/api-client";
@@ -11,15 +10,9 @@ import { useNewDoctorProfile } from "@/hooks/use-new-doctor";
 import { usePractitioner } from "@/hooks/use-discover";
 import { usePractitionerSlots, usePractitionerAvailableDates } from "@/hooks/use-availability";
 import { useAppointments } from "@/hooks/use-appointments";
+import { useFavorites } from "@/hooks/use-favorites";
 import { useAuth } from "@/contexts/auth-context";
 import { formatCurrency, cn } from "@/lib/utils";
-
-function useReviews(practId: string | undefined) {
-  return useQuery<any[]>(
-    () => (practId ? apiClient<{ data: any[] }>(`/api/discover/practitioners/${practId}/reviews`).then((r) => r.data) : Promise.resolve([])),
-    [practId]
-  );
-}
 
 function useNewDoctorSlots(doctorId: string | undefined, date: string) {
   return useQuery<any[]>(
@@ -41,23 +34,17 @@ function useNewDoctorAvailableDates(doctorId: string | undefined) {
   );
 }
 import {
-  Star,
   ShieldCheck,
   Award,
   Languages,
   MapPin,
-  Video,
   ChevronRight,
   ArrowLeft,
-  User,
-  BookOpen,
   Briefcase,
   Building,
   Calendar,
   Check,
   Heart,
-  Share2,
-  ExternalLink,
   CloudSun,
   Sun,
   Moon
@@ -138,7 +125,8 @@ export default function DoctorProfileClient() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { user } = useAuth();
-  const [wishlisted, setWishlisted] = useState(false);
+  const { favoriteIds, toggleFavorite } = useFavorites(user?.id);
+  const wishlisted = !!id && favoriteIds.has(id);
 
   // Fetch current patient's appointments to detect their booked slots
   const { data: myAppointments } = useAppointments(user?.id);
@@ -159,6 +147,7 @@ export default function DoctorProfileClient() {
         id: newDoc.id,
         name: newDoc.full_name,
         specialty: newDoc.specializations?.[0] || "Ayurveda",
+        specialties: newDoc.specializations || [],
         rating: 4.9,
         reviews: 1284,
         experience: 15,
@@ -282,9 +271,6 @@ export default function DoctorProfileClient() {
   const slots = Array.from(slotMap.values());
   const slotsLoading = isLegacy ? legacySlotsQuery.loading : newSlotsQuery.loading;
 
-  const { data: rawReviews, loading: reviewsLoading } = useReviews(id);
-  const reviews = rawReviews ?? [];
-
   // Derive the current patient's booked slot for this doctor + selected date
   // Must be declared BEFORE any early returns to satisfy Rules of Hooks.
   const myBookedSlotForThisDate = useMemo(() => {
@@ -371,17 +357,18 @@ export default function DoctorProfileClient() {
 
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setWishlisted(!wishlisted)}
-            className="p-2.5 rounded-xl border border-neutral-200 hover:border-red-200 hover:text-red-500 hover:bg-red-50 transition-all cursor-pointer active:scale-95 flex items-center gap-1.5"
-            title="Wishlist"
+            type="button"
+            onClick={() => id && toggleFavorite(id)}
+            className={cn(
+              "p-2.5 rounded-xl border transition-all cursor-pointer active:scale-95 flex items-center gap-1.5",
+              wishlisted
+                ? "border-red-200 bg-red-50 text-red-600"
+                : "border-neutral-200 hover:border-red-200 hover:text-red-500 hover:bg-red-50 text-neutral-600"
+            )}
+            title={wishlisted ? "Remove from Favorites" : "Add to Favorites"}
           >
-            <Heart size={14} className={cn("transition-colors duration-200", wishlisted ? "fill-red-500 text-red-500" : "text-neutral-500")} />
-            <span className="hidden sm:inline text-neutral-600">Save Doctor</span>
-          </button>
-          
-          <button className="p-2.5 rounded-xl border border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50 transition-all cursor-pointer active:scale-95 flex items-center gap-1.5 text-neutral-600">
-            <Share2 size={14} />
-            <span className="hidden sm:inline">Share</span>
+            <Heart size={14} className={cn("pointer-events-none transition-colors duration-200", wishlisted ? "fill-red-500 text-red-500" : "text-neutral-500")} />
+            <span className="hidden sm:inline">Favorites</span>
           </button>
         </div>
       </div>
@@ -428,7 +415,7 @@ export default function DoctorProfileClient() {
                 </div>
 
                 <p className="text-xs font-bold text-herb-green uppercase tracking-widest leading-none">
-                  {doctor.specialty}
+                  {(doctor.specialties && doctor.specialties.length > 0 ? doctor.specialties : [doctor.specialty]).join(" · ")}
                 </p>
 
                 <div className="flex items-center justify-center sm:justify-start gap-2 mt-2 flex-wrap select-none">
@@ -436,12 +423,6 @@ export default function DoctorProfileClient() {
                 </div>
 
                 <div className="flex items-center justify-center sm:justify-start gap-4 mt-2.5 text-xs text-muted-foreground font-semibold flex-wrap">
-                  <span className="flex items-center gap-1 text-amber-600">
-                    <Star size={13} className="fill-amber-500 text-amber-500" />
-                    <span className="font-bold text-foreground font-mono">{doctor.rating}</span> 
-                    <span className="opacity-75">({doctor.reviews} Patient Reviews)</span>
-                  </span>
-                  <span className="opacity-40">·</span>
                   <span className="flex items-center gap-1">
                     <Briefcase size={12} className="text-neutral-400" />
                     <span>{doctor.experience} yrs exp</span>
@@ -449,7 +430,7 @@ export default function DoctorProfileClient() {
                   <span className="opacity-40">·</span>
                   <span className="flex items-center gap-1">
                     <MapPin size={12} className="text-neutral-400" />
-                    <span>MeyVeda Center · {doctor.location || "Online"}</span>
+                    <span>{doctor.location || "Online"}</span>
                   </span>
                 </div>
               </div>
@@ -460,14 +441,11 @@ export default function DoctorProfileClient() {
                 <p className="font-display text-2xl font-black text-foreground tracking-tight mt-1 leading-none font-mono">
                   {formatCurrency(doctor.fee)}
                 </p>
-                <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100/50 px-2 py-0.5 rounded mt-2.5 leading-none">
-                  Slots available: {doctor.nextAvailable}
-                </span>
               </div>
             </div>
 
             {/* Redesigned Info Widgets Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 mt-6 border-t border-neutral-100 pt-5 select-none">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 mt-6 border-t border-neutral-100 pt-5 select-none">
               {/* Stat 1: Experience */}
               <div className="bg-neutral-50/60 border border-neutral-150/50 rounded-2xl p-3 flex items-center gap-3.5 transition-colors hover:bg-neutral-50">
                 <div className="w-9 h-9 rounded-xl bg-white border border-neutral-200/60 flex items-center justify-center text-herb-green shadow-3xs flex-shrink-0">
@@ -479,173 +457,36 @@ export default function DoctorProfileClient() {
                 </div>
               </div>
 
-              {/* Stat 2: Consultations */}
-              <div className="bg-neutral-50/60 border border-neutral-150/50 rounded-2xl p-3 flex items-center gap-3.5 transition-colors hover:bg-neutral-50">
-                <div className="w-9 h-9 rounded-xl bg-white border border-neutral-200/60 flex items-center justify-center text-herb-green shadow-3xs flex-shrink-0">
-                  <BookOpen size={16} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-extrabold text-foreground">1,280+</h4>
-                  <p className="text-[10px] text-muted-foreground leading-none mt-0.5 font-semibold">Successful Consults</p>
-                </div>
-              </div>
-
-              {/* Stat 3: Languages */}
+              {/* Stat 2: Languages */}
               <div className="bg-neutral-50/60 border border-neutral-150/50 rounded-2xl p-3 flex items-center gap-3.5 transition-colors hover:bg-neutral-50">
                 <div className="w-9 h-9 rounded-xl bg-white border border-neutral-200/60 flex items-center justify-center text-herb-green shadow-3xs flex-shrink-0">
                   <Languages size={16} />
                 </div>
                 <div className="min-w-0">
-                  <h4 className="text-xs font-extrabold text-foreground truncate">{doctor.languages.slice(0, 2).join(", ")}</h4>
+                  <h4 className="text-xs font-extrabold text-foreground truncate" title={doctor.languages.join(", ")}>{doctor.languages.join(", ")}</h4>
                   <p className="text-[10px] text-muted-foreground leading-none mt-0.5 font-semibold">Spoken Languages</p>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Redesigned Segmented Control Tabs */}
-          <Tabs defaultValue="about">
-            <TabsList className="bg-neutral-100/70 p-1.5 rounded-2xl flex gap-1.5 border border-neutral-200/30 w-fit select-none shadow-3xs mb-6">
-              <TabsTrigger value="about" className="py-2.5 px-6 text-xs font-bold rounded-xl data-[state=active]:bg-white data-[state=active]:text-herb-green data-[state=active]:shadow-xs hover:bg-white/20 transition-all cursor-pointer">
-                About
-              </TabsTrigger>
-              <TabsTrigger value="reviews" className="py-2.5 px-6 text-xs font-bold rounded-xl data-[state=active]:bg-white data-[state=active]:text-herb-green data-[state=active]:shadow-xs hover:bg-white/20 transition-all cursor-pointer">
-                Patient Reviews ({reviews.length})
-              </TabsTrigger>
-              <TabsTrigger value="clinic" className="py-2.5 px-6 text-xs font-bold rounded-xl data-[state=active]:bg-white data-[state=active]:text-herb-green data-[state=active]:shadow-xs hover:bg-white/20 transition-all cursor-pointer">
-                Clinic Location
-              </TabsTrigger>
-            </TabsList>
-
-            {/* TAB 1: ABOUT */}
-            <TabsContent value="about" className="space-y-4 outline-none">
-              <div className="bg-white rounded-3xl p-6.5 border border-neutral-150/70 shadow-2xs">
-                <h3 className="text-[10px] font-extrabold text-muted-foreground/80 uppercase tracking-widest mb-3.5 flex items-center gap-1.5 select-none">
-                  <User size={13} className="text-herb-green" />
-                  Professional Summary
-                </h3>
-                <p className="text-xs sm:text-sm text-neutral-700 leading-relaxed font-semibold">
-                  {doctor.about}
-                </p>
+          {/* Doctor Profile Content */}
+          <div className="space-y-4">
+            <div className="bg-white rounded-3xl p-6.5 border border-neutral-150/70 shadow-2xs">
+              <h3 className="text-[10px] font-extrabold text-muted-foreground/80 uppercase tracking-widest mb-4.5 flex items-center gap-1.5 select-none">
+                <Award size={13} className="text-herb-green" />
+                Credentials & Qualifications
+              </h3>
+              <div className="flex flex-wrap gap-2 select-none">
+                {doctor.qualifications.map((q) => (
+                  <span key={q} className="inline-flex items-center gap-1 text-xs bg-herb-green/5 text-herb-green border border-herb-green/12 px-3 py-2 rounded-xl font-bold shadow-3xs">
+                    <Check size={11} className="stroke-[2.5]" />
+                    {q}
+                  </span>
+                ))}
               </div>
-              
-              <div className="bg-white rounded-3xl p-6.5 border border-neutral-150/70 shadow-2xs">
-                <h3 className="text-[10px] font-extrabold text-muted-foreground/80 uppercase tracking-widest mb-4.5 flex items-center gap-1.5 select-none">
-                  <Award size={13} className="text-herb-green" />
-                  Credentials & Qualifications
-                </h3>
-                <div className="flex flex-wrap gap-2 select-none">
-                  {doctor.qualifications.map((q) => (
-                    <span key={q} className="inline-flex items-center gap-1 text-xs bg-herb-green/5 text-herb-green border border-herb-green/12 px-3 py-2 rounded-xl font-bold shadow-3xs">
-                      <Check size={11} className="stroke-[2.5]" />
-                      {q}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </TabsContent>
-
-            {/* TAB 2: REVIEWS */}
-            <TabsContent value="reviews" className="space-y-4 outline-none">
-              {reviewsLoading ? (
-                <div className="text-center text-xs text-muted-foreground py-10 bg-white rounded-3xl border border-neutral-150">
-                  <div className="w-6 h-6 rounded-full border-2 border-herb-green border-t-transparent animate-spin mx-auto mb-2" />
-                  Loading feedback reviews...
-                </div>
-              ) : reviews.length === 0 ? (
-                <div className="text-center text-xs text-muted-foreground py-12 bg-white rounded-3xl border border-neutral-150 shadow-2xs select-none">
-                  ⭐ No patient reviews submitted yet.
-                </div>
-              ) : (
-                <div className="space-y-3.5">
-                  {/* Reviews Summary Stats Card */}
-                  <div className="bg-gradient-to-br from-amber-500/5 to-amber-500/10 rounded-3xl p-5 border border-amber-500/10 flex items-center gap-5 select-none">
-                    <div className="text-center bg-white border border-amber-200/80 rounded-2xl p-4.5 shadow-3xs flex-shrink-0">
-                      <h4 className="text-3xl font-black text-amber-600 font-mono tracking-tight">{doctor.rating}</h4>
-                      <p className="text-[9px] text-muted-foreground uppercase font-extrabold tracking-wider mt-1">Rating Average</p>
-                    </div>
-                    <div className="space-y-1">
-                      <h4 className="text-xs font-bold text-foreground">Verified Consultation Reviews</h4>
-                      <p className="text-[11px] text-muted-foreground leading-normal">
-                        Feedback is collected from patients who booked and successfully concluded consultations with {doctor.name}.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Reviews Cards List */}
-                  {reviews.map((review) => (
-                    <div key={review.id} className="bg-white rounded-3xl p-5 border border-neutral-150/70 shadow-2xs hover:border-neutral-200 transition-colors">
-                      <div className="flex items-center justify-between gap-4 border-b border-neutral-100 pb-3.5 mb-3.5 select-none flex-wrap">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-xl bg-neutral-100 flex items-center justify-center font-display text-xs font-extrabold text-neutral-600">
-                            {review.patientName[0]}
-                          </div>
-                          <div>
-                            <span className="text-xs font-bold text-foreground">{review.patientName}</span>
-                            <p className="text-[9px] text-muted-foreground leading-none mt-0.5">Verified Patient</p>
-                          </div>
-                        </div>
-                        
-                        <div className="flex items-center gap-2">
-                          <div className="flex gap-0.5">
-                            {Array.from({ length: review.stars }).map((_, j) => (
-                              <Star key={j} size={11} className="fill-amber-500 text-amber-500" />
-                            ))}
-                          </div>
-                          <span className="text-[9px] text-muted-foreground font-bold font-mono">{new Date(review.date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</span>
-                        </div>
-                      </div>
-                      <p className="text-xs text-neutral-700 leading-relaxed font-semibold">{review.text}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </TabsContent>
-
-            {/* TAB 3: CLINIC */}
-            <TabsContent value="clinic" className="outline-none">
-              <div className="bg-white rounded-3xl p-6.5 border border-neutral-150/70 shadow-2xs space-y-5">
-                <div className="flex gap-4 items-start select-none">
-                  <div className="w-10 h-10 rounded-xl bg-herb-green/10 flex items-center justify-center text-herb-green shadow-3xs flex-shrink-0">
-                    <MapPin size={18} />
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-bold text-foreground uppercase tracking-wider">Primary Consultation Center</h3>
-                    <p className="text-sm font-extrabold text-foreground mt-1">{doctor.location || "Online Consultations"}</p>
-                    <p className="text-xs text-muted-foreground leading-normal mt-0.5">MeyVeda Wellness Clinics, Sector 4 Block C, Bengaluru</p>
-                  </div>
-                </div>
-
-                {/* Vector Map Mockup Placeholder Card */}
-                <div className="relative h-44 rounded-2xl bg-neutral-50 border border-neutral-200 overflow-hidden flex items-center justify-center shadow-3xs select-none">
-                  {/* Mock Map Vector Graphics */}
-                  <svg className="absolute inset-0 w-full h-full text-neutral-200/70" viewBox="0 0 400 200" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M0 40H400M0 100H400M0 160H400" stroke="currentColor" strokeWidth="1.5" />
-                    <path d="M60 0V200M180 0V200M320 0V200" stroke="currentColor" strokeWidth="1.5" />
-                    <path d="M0 0L400 200M400 0L0 200" stroke="currentColor" strokeWidth="0.8" strokeDasharray="3 3" />
-                  </svg>
-                  <div className="relative z-10 flex flex-col items-center gap-2 bg-white/95 border border-neutral-200 p-3 rounded-2xl shadow-md max-w-[200px] text-center">
-                    <MapPin size={16} className="text-red-500 fill-red-500 animate-bounce" />
-                    <span className="text-[10px] font-bold text-foreground">Clinic Address Link</span>
-                    <a href="https://maps.google.com" target="_blank" rel="noopener noreferrer" className="text-[9px] text-herb-green font-extrabold flex items-center gap-0.5 hover:underline">
-                      <span>Google Maps</span>
-                      <ExternalLink size={8} />
-                    </a>
-                  </div>
-                </div>
-
-                <div className="bg-indigo-50/50 p-4 border border-indigo-100 text-indigo-900 rounded-2xl text-xs flex gap-2.5 items-start shadow-3xs select-none">
-                  <Video size={14} className="text-indigo-600 flex-shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <h5 className="font-bold text-[11px]">Telehealth Consultation Available</h5>
-                    <p className="text-[10px] leading-normal font-semibold">
-                      This doctor also provides HIPAA-compliant encrypted video consultations from the comfort of your home.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </TabsContent>
-          </Tabs>
+            </div>
+          </div>
         </div>
 
         {/* RIGHT COLUMN: SLOT BOOKING SIDEBAR CARD */}

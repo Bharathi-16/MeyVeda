@@ -3,10 +3,11 @@
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 
-export type UserRole = "patient" | "practitioner" | "admin" | "super_admin";
+export type UserRole = "patient" | "practitioner" | "admin" | "super_admin" | "assistant";
 
 export interface AuthUser {
   id?: string;
+  practitionerId?: string;
   phone: string;
   role: UserRole;
   name: string;
@@ -16,6 +17,8 @@ export interface AuthUser {
   gender?: string;
   bloodGroup?: string;
   emergencyContact?: { name: string; phone: string; relation: string };
+  assistantStatus?: "pending" | "approved" | "rejected" | "suspended";
+  linkedDoctorName?: string;
 }
 
 interface AuthContextValue {

@@ -3,7 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { ChevronLeft, ChevronRight, Video } from "lucide-react";
+import { ChevronLeft, ChevronRight, Video, Calendar } from "lucide-react";
+import { ENABLE_VIDEO_CONSULTATION } from "@/lib/feature-flags";
 
 export function UpcomingCarousel({ appointments }: { appointments: any[] }) {
   const [currentPage, setCurrentPage] = useState(0);
@@ -86,10 +87,10 @@ export function UpcomingCarousel({ appointments }: { appointments: any[] }) {
               </div>
             </div>
 
-            <Link href={`/consult?id=${appt.consultationId || appt.id}`} className="block">
+            <Link href={ENABLE_VIDEO_CONSULTATION ? `/consult?id=${appt.consultationId || appt.id}` : "/appointments"} className="block">
               <button className="w-full py-2.5 bg-white text-herb-green text-[11px] font-extrabold rounded-xl border border-herb-green/30 hover:bg-herb-green/5 transition-all flex items-center justify-center gap-1.5 group-hover:bg-herb-green group-hover:text-white group-hover:border-herb-green shadow-sm active:scale-95 tracking-wide uppercase">
-                <Video size={13} />
-                <span>Join Session</span>
+                {ENABLE_VIDEO_CONSULTATION ? <Video size={13} /> : <Calendar size={13} />}
+                <span>{ENABLE_VIDEO_CONSULTATION ? "Join Session" : "View Details"}</span>
               </button>
             </Link>
           </div>

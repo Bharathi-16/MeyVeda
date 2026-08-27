@@ -152,29 +152,10 @@ Deno.serve(async (request: Request): Promise<Response> => {
     ).toISOString();
 
     /*
-     * Delete any previous OTP for the same email and purpose.
-     * This ensures that only the most recent OTP remains valid.
-     */
-    const { error: deleteOldOtpError } = await supabase
-      .from("email_otps")
-      .delete()
-      .eq("email", normalizedEmail)
-      .eq("purpose", OTP_PURPOSE);
-
-    if (deleteOldOtpError) {
-      console.error(
-        "Unable to delete old OTP:",
-        deleteOldOtpError,
-      );
-
-      throw new Error(
-        `Unable to prepare OTP: ${deleteOldOtpError.message}`,
-      );
-    }
-
-    /*
-     * Store the actual six-digit OTP.
-     * The otp column can remain varchar(6).
+     * Store the actual six-digit OTP as a new row. Previous OTPs for this
+     * email/purpose are left untouched — verify-otp always reads the most
+     * recent unconsumed, unexpired row, so old rows simply age out via
+     * expires_at instead of being deleted here.
      */
     const { error: insertOtpError } = await supabase
       .from("email_otps")

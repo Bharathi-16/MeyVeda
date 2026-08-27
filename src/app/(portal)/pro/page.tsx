@@ -1,29 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  Activity,
   Calendar,
+  Check,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
-  FileText,
-  History,
+  ListFilter,
   MapPin,
-  PenTool,
-  Search,
   UserPlus,
   Video,
+  XCircle,
 } from "lucide-react";
 
 import { HPRBadge } from "@/components/Badges";
 import { useAuth } from "@/contexts/auth-context";
-import { usePractitionerAnalytics } from "@/hooks/use-analytics";
 import { usePractitionerUpcomingCalls } from "@/hooks/use-consultations";
 import { usePractitioner } from "@/hooks/use-discover";
-import { usePractitionerPrescriptions } from "@/hooks/use-prescriptions";
 import { useQuery } from "@/hooks/useQuery";
 import { cn } from "@/lib/utils";
 import type { QueuePatient, QueueStatus } from "@/lib/types";
@@ -32,6 +29,7 @@ import { apiClient } from "@/shared/api/api-client";
 type PractitionerUpcomingAppointment = {
   appointmentId: string;
   name: string;
+  relationship?: string | null;
   age: number;
   gender?: string | null;
   reason?: string | null;
@@ -121,7 +119,40 @@ const STATUS_CONFIG: Record<
       "bg-gray-100 text-gray-600 border border-gray-200",
     dot: "bg-gray-400",
   },
+  missed: {
+    label: "Missed",
+    color:
+      "bg-red-50 text-red-600 border border-red-200",
+    dot: "bg-red-400",
+  },
 };
+
+function isAppointmentTimePast(
+  dateStr: string,
+  timeStr: string,
+): boolean {
+  const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!match) {
+    return false;
+  }
+
+  const [, hourRaw, minuteRaw, meridiem] = match;
+  let hour = Number(hourRaw) % 12;
+  if (meridiem.toUpperCase() === "PM") {
+    hour += 12;
+  }
+
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const appointmentDate = new Date(
+    year,
+    month - 1,
+    day,
+    hour,
+    Number(minuteRaw),
+  );
+
+  return appointmentDate.getTime() < Date.now();
+}
 
 function buildConsultationHref(
   appointmentId: string,
@@ -136,8 +167,6 @@ export default function ProDashboardPage() {
 
   // ── Core practitioner data ──────────────────────────────────────────────────
   const { data: practitioner, loading: practLoading } = usePractitioner(user?.id);
-  const { data: analytics } = usePractitionerAnalytics(user?.id);
-  const { data: prescriptions } = usePractitionerPrescriptions(user?.id);
   const { data: upcomingCalls } = usePractitionerUpcomingCalls(user?.id);
 
   const doctorName     = practitioner?.name ?? user?.name ?? "Practitioner";
@@ -146,6 +175,21 @@ export default function ProDashboardPage() {
   const [isOnline, setIsOnline] = useState(true);
   const [upcomingTab, setUpcomingTab] =
     useState<"today" | "future">("today");
+  const [queueFilter, setQueueFilter] =
+    useState<"all" | "completed" | "missed">("all");
+  const [queueFilterOpen, setQueueFilterOpen] = useState(false);
+  const queueFilterRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!queueFilterOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (queueFilterRef.current && !queueFilterRef.current.contains(e.target as Node)) {
+        setQueueFilterOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [queueFilterOpen]);
 
   // ── Calendar and date selection ─────────────────────────────────────────────
   const todayStr = new Date().toLocaleDateString("en-CA");
@@ -165,6 +209,18 @@ export default function ProDashboardPage() {
     usePractitionerQueue(practitioner?.id, selectedDate);
   const queuePatients: QueuePatient[] = rawQueuePatients ?? [];
 
+  // Status (waiting/checked-in/in-session/completed/missed) is decided
+  // server-side — a booked slot stays "Waiting" until the next slot's start
+  // time, at which point the backend flips it to "missed" on the next fetch.
+  // No separate client-side time cutoff here; just sort completed to the end.
+  const visibleQueuePatients: QueuePatient[] = queuePatients
+    .slice()
+    .sort((a, b) => {
+      const aCompleted = a.status === "completed" ? 1 : 0;
+      const bCompleted = b.status === "completed" ? 1 : 0;
+      return aCompleted - bCompleted;
+    });
+
   // ── Calendar month appointment counts ───────────────────────────────────────
   const { data: monthCounts } = usePractitionerMonthCounts(
     practitioner?.id,
@@ -175,8 +231,11 @@ export default function ProDashboardPage() {
   // ── Upcoming appointments (today + future) ──────────────────────────────────
   const { data: rawUpcoming, loading: upcomingLoading } =
     usePractitionerUpcomingAppointments(practitioner?.id);
-  const upcomingAppointments: PractitionerUpcomingAppointment[] =
-    rawUpcoming ?? [];
+  const upcomingAppointments: PractitionerUpcomingAppointment[] = (
+    rawUpcoming ?? []
+  ).filter(
+    (appointment) => !isAppointmentTimePast(appointment.date, appointment.time),
+  );
 
   // Split into today vs future.
   const todayAppts = upcomingAppointments.filter(
@@ -186,17 +245,28 @@ export default function ProDashboardPage() {
     (appointment) => appointment.date !== todayStr,
   );
 
-  // ── Stats ───────────────────────────────────────────────────────────────────
+  // ── Stats (scoped to the selected day only) ─────────────────────────────────
   const selectedDateStats = {
-    total:       queuePatients.length,
     completed: queuePatients.filter(
       (patient) => patient.status === "completed",
     ).length,
-    remaining: queuePatients.filter(
-      (patient) => patient.status !== "completed",
+    missed: queuePatients.filter(
+      (patient) => patient.status === "missed",
     ).length,
-    avgDuration: analytics?.avgDuration ? String(analytics.avgDuration) : "0",
   };
+
+  // ── Queue filter (drives both the list and the container heading) ──────────
+  const QUEUE_FILTER_LABELS: Record<"all" | "completed" | "missed", string> = {
+    all: "Today's Queue",
+    completed: "Completed",
+    missed: "Missed",
+  };
+  const displayedQueuePatients =
+    queueFilter === "all"
+      ? visibleQueuePatients.filter(
+          (patient) => patient.status !== "completed" && patient.status !== "missed",
+        )
+      : visibleQueuePatients.filter((patient) => patient.status === queueFilter);
 
   const isLoading = practLoading || queueLoading;
 
@@ -246,11 +316,6 @@ export default function ProDashboardPage() {
     calendarMonth - 1,
     1,
   ).toLocaleString("en-US", { month: "long" });
-
-  const bookedThisMonth = Object.values(monthCounts ?? {}).reduce<number>(
-    (total, count) => total + Number(count),
-    0,
-  );
 
   const renderCalendarGrid = () => {
     const monthIndex = calendarMonth - 1;
@@ -351,7 +416,11 @@ export default function ProDashboardPage() {
               </div>
               <p className="text-sm font-medium text-gray-500 mt-1">
                 {practitioner
-                  ? `${practitioner.discipline} · ${practitioner.specialty || "Holistic Clinic"}`
+                  ? `${practitioner.discipline} · ${
+                      practitioner.specialties && practitioner.specialties.length > 0
+                        ? practitioner.specialties.join(", ")
+                        : practitioner.specialty || "Holistic Clinic"
+                    }`
                   : "Ayurveda · Holistic Wellness Clinic"}
               </p>
               {practitioner ? (
@@ -366,18 +435,27 @@ export default function ProDashboardPage() {
             </div>
           </div>
 
-          {/* Online toggle */}
-          <div className="flex items-center gap-3 bg-[#F8FAFC] px-4 py-3 rounded-[12px] border border-gray-100">
-            <span className="text-sm font-semibold text-gray-600">{isOnline ? "Online" : "Offline"}</span>
-            <button
-              type="button"
-              onClick={() => setIsOnline((online) => !online)}
-              className={cn("relative w-12 h-6 rounded-full transition-all shadow-inner", isOnline ? "bg-emerald-500" : "bg-gray-300")}
-              aria-label={isOnline ? "Go offline" : "Go online"}
-              aria-pressed={isOnline}
+          <div className="flex items-center gap-3">
+            <Link
+              href="/pro/availability"
+              className="inline-flex items-center px-3.5 py-2.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 font-semibold text-sm rounded-xl transition-colors"
             >
-              <div className={cn("absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-all", isOnline ? "left-7" : "left-1")} />
-            </button>
+              Edit Schedule
+            </Link>
+
+            {/* Online toggle */}
+            <div className="flex items-center gap-3 bg-[#F8FAFC] px-4 py-3 rounded-[12px] border border-gray-100">
+              <span className="text-sm font-semibold text-gray-600">{isOnline ? "Online" : "Offline"}</span>
+              <button
+                type="button"
+                onClick={() => setIsOnline((online) => !online)}
+                className={cn("relative w-12 h-6 rounded-full transition-all shadow-inner", isOnline ? "bg-emerald-500" : "bg-gray-300")}
+                aria-label={isOnline ? "Go offline" : "Go online"}
+                aria-pressed={isOnline}
+              >
+                <div className={cn("absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-all", isOnline ? "left-7" : "left-1")} />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -421,13 +499,11 @@ export default function ProDashboardPage() {
           </div>
         ) : (
           <>
-            {/* ── Stats cards ──────────────────────────────────────────── */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
+            {/* ── Stats cards (scoped to the selected day) ────────────── */}
+            <div className="grid grid-cols-2 gap-5 mb-8">
               {[
-                { label: "Total Patients", value: selectedDateStats.total, color: "text-indigo-600", bg: "bg-indigo-50", icon: Calendar },
                 { label: "Completed", value: selectedDateStats.completed, color: "text-emerald-600", bg: "bg-emerald-50", icon: CheckCircle2 },
-                { label: "Waiting", value: selectedDateStats.remaining, color: "text-amber-600", bg: "bg-amber-50", icon: Clock },
-                { label: "Avg Wait (min)", value: selectedDateStats.avgDuration, color: "text-purple-600", bg: "bg-purple-50", icon: Activity },
+                { label: "Missed", value: selectedDateStats.missed, color: "text-red-600", bg: "bg-red-50", icon: XCircle },
               ].map((s) => (
                 <div key={s.label} className="bg-white rounded-[16px] border border-[#E5E7EB] p-5 shadow-[0_2px_8px_rgba(0,0,0,0.04)] flex items-center gap-4">
                   <div className={cn("w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0", s.bg)}>
@@ -457,10 +533,10 @@ export default function ProDashboardPage() {
                     <div className="flex items-center gap-3">
                       <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                         <Clock className="w-5 h-5 text-indigo-500" />
-                        Patient Queue · {getDateLabel(selectedDate)}
+                        {QUEUE_FILTER_LABELS[queueFilter]} · {getDateLabel(selectedDate)}
                       </h2>
                       <span className="text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100/80 px-3 py-1 rounded-full">
-                        Count: {queuePatients.length}
+                        Count: {displayedQueuePatients.length}
                       </span>
                     </div>
 
@@ -472,12 +548,48 @@ export default function ProDashboardPage() {
                         <UserPlus className="w-4 h-4" />
                         Walk-in Patient
                       </Link>
-                      <Link
-                        href="/pro/availability"
-                        className="inline-flex items-center px-3.5 py-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 font-semibold text-sm rounded-xl transition-colors"
-                      >
-                        Edit Schedule
-                      </Link>
+                      <div className="relative" ref={queueFilterRef}>
+                        <button
+                          type="button"
+                          onClick={() => setQueueFilterOpen((open) => !open)}
+                          className="inline-flex items-center gap-2 pl-3.5 pr-3 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 font-semibold text-sm rounded-xl transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                          aria-haspopup="listbox"
+                          aria-expanded={queueFilterOpen}
+                        >
+                          <ListFilter className="w-3.5 h-3.5" />
+                          {QUEUE_FILTER_LABELS[queueFilter]}
+                          <ChevronDown className={cn("w-4 h-4 transition-transform", queueFilterOpen && "rotate-180")} />
+                        </button>
+
+                        {queueFilterOpen && (
+                          <div
+                            role="listbox"
+                            className="absolute right-0 z-20 mt-2 w-48 py-1.5 bg-white rounded-2xl border border-gray-100 shadow-[0_12px_32px_rgba(15,23,42,0.12)] animate-in fade-in zoom-in-95 slide-in-from-top-1 duration-150"
+                          >
+                            {(["all", "completed", "missed"] as const).map((option) => (
+                              <button
+                                key={option}
+                                type="button"
+                                role="option"
+                                aria-selected={queueFilter === option}
+                                onClick={() => {
+                                  setQueueFilter(option);
+                                  setQueueFilterOpen(false);
+                                }}
+                                className={cn(
+                                  "w-full flex items-center justify-between gap-2 px-4 py-2.5 text-sm font-semibold text-left transition-colors",
+                                  queueFilter === option
+                                    ? "text-indigo-700 bg-indigo-50/80"
+                                    : "text-gray-600 hover:bg-gray-50",
+                                )}
+                              >
+                                {QUEUE_FILTER_LABELS[option]}
+                                {queueFilter === option && <Check className="w-4 h-4 text-indigo-600" />}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -490,19 +602,19 @@ export default function ProDashboardPage() {
                           </div>
                         ))}
                       </div>
-                    ) : queuePatients.length === 0 ? (
+                    ) : displayedQueuePatients.length === 0 ? (
                       <div className="text-center py-12 border-2 border-dashed border-gray-200 rounded-2xl bg-gray-50">
                         <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center mx-auto mb-3 shadow-sm">
                           <UserPlus className="w-5 h-5 text-gray-400" />
                         </div>
                         <p className="text-gray-900 font-bold mb-1">
-                          No patients in queue for {getDateLabel(selectedDate)}.
+                          No {queueFilter === "all" ? "patients in queue" : QUEUE_FILTER_LABELS[queueFilter].toLowerCase() + " patients"} for {getDateLabel(selectedDate)}.
                         </p>
                         <p className="text-sm text-gray-500">New bookings will appear here automatically.</p>
                       </div>
                     ) : (
                       <div className="space-y-4">
-                        {queuePatients.map((patient: QueuePatient) => {
+                        {displayedQueuePatients.map((patient: QueuePatient) => {
                           const statusConf = STATUS_CONFIG[patient.status] || STATUS_CONFIG.waiting;
                           const isPending  = patient.status === "checked-in" || patient.status === "waiting";
                           return (
@@ -511,7 +623,7 @@ export default function ProDashboardPage() {
                               className={cn(
                                 "bg-white rounded-2xl border p-5 transition-all hover:shadow-md",
                                 patient.status === "checked-in" ? "border-indigo-200 ring-1 ring-indigo-50" : "border-gray-200",
-                                patient.status === "completed" && "opacity-60 bg-gray-50"
+                                (patient.status === "completed" || patient.status === "missed") && "opacity-60 bg-gray-50"
                               )}
                             >
                               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -527,7 +639,6 @@ export default function ProDashboardPage() {
                                     <p className="text-sm text-gray-600 truncate">{patient.reason || "No specific reason provided"}</p>
                                     <div className="flex items-center gap-3 mt-2 text-xs font-medium text-gray-500">
                                       <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5"/> {patient.time}</span>
-                                      <span className="flex items-center gap-1.5">{patient.mode === "video" ? <Video className="w-3.5 h-3.5 text-blue-500"/> : <MapPin className="w-3.5 h-3.5 text-emerald-500"/>} {patient.mode === "video" ? "Video" : "In-Clinic"}</span>
                                       {patient.abha && (
                                         <span className="text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">ABHA ✓</span>
                                       )}
@@ -537,46 +648,44 @@ export default function ProDashboardPage() {
 
                                 <div className="flex flex-col sm:items-end gap-3">
                                   <div className="flex items-center gap-2">
-                                    {isPending && (
-                                      <span className={cn("text-xs font-semibold bg-gray-100 px-2.5 py-1 rounded-full", patient.status === "checked-in" ? "text-indigo-600" : "text-gray-500")}>
-                                        Wait: {patient.waitMins}m
-                                      </span>
-                                    )}
                                     <div className={cn("flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold", statusConf.color)}>
                                       <div className={cn("w-1.5 h-1.5 rounded-full", statusConf.dot)} />
                                       {statusConf.label}
                                     </div>
                                   </div>
 
+                                  {patient.status === "missed" && (
+                                    <div className="flex gap-2">
+                                      <span
+                                        className="inline-flex items-center justify-center rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-400 bg-gray-50 cursor-not-allowed"
+                                        aria-disabled="true"
+                                        title="This appointment was missed. Rescheduling is not yet available."
+                                      >
+                                        Reschedule
+                                      </span>
+                                    </div>
+                                  )}
+
                                   {isPending && (
                                       <div className="flex gap-2">
-                                        <Link
-                                          href={`/pro/patient/${encodeURIComponent(
-                                            patient.id,
-                                          )}`}
-                                          className="inline-flex items-center justify-center rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
-                                        >
-                                          Intake
-                                        </Link>
-
-                                        {patient.mode === "video" ? (
-                                          <Link
-                                            href={buildConsultationHref(patient.appointmentId)}
-                                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white shadow-sm transition-all hover:bg-indigo-700 active:scale-95"
+                                        {selectedDate !== todayStr ? (
+                                          <span
+                                            className="inline-flex items-center justify-center rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-400 bg-gray-50 cursor-not-allowed"
+                                            aria-disabled="true"
                                           >
-                                            <Video className="h-4 w-4" />
-                                            Start Video
-                                          </Link>
+                                            Consult
+                                          </span>
                                         ) : (
                                           <Link
-                                            href={`/pro/emr?patient=${encodeURIComponent(
+                                            href={`/pro/patient/${encodeURIComponent(
                                               patient.id,
-                                            )}`}
-                                            className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white shadow-sm transition-all hover:bg-indigo-700 active:scale-95"
+                                            )}?appointmentId=${encodeURIComponent(patient.appointmentId)}`}
+                                            className="inline-flex items-center justify-center rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
                                           >
                                             Consult
                                           </Link>
                                         )}
+
                                       </div>
                                     )}
                                 </div>
@@ -649,6 +758,9 @@ export default function ProDashboardPage() {
                                   <p className="text-sm font-bold text-gray-900">{appt.name}</p>
                                   {appt.age > 0 && <span className="text-[11px] font-semibold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">{appt.age}y</span>}
                                   {appt.gender && <span className="text-[11px] font-semibold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full capitalize">{appt.gender}</span>}
+                                  {appt.relationship && (
+                                    <span className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full capitalize">{appt.relationship}</span>
+                                  )}
                                 </div>
                                 <p className="text-xs text-gray-500 truncate">{appt.reason || "No specific reason provided"}</p>
                               </div>
@@ -676,16 +788,6 @@ export default function ProDashboardPage() {
                               {appt.time}
                             </div>
 
-                            {appt.mode === "video" &&
-                              (appt.isToday ?? appt.date === todayStr) && (
-                              <Link
-                                href={buildConsultationHref(appt.appointmentId)}
-                                className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700"
-                              >
-                                <Video className="h-3.5 w-3.5" />
-                                Start Video
-                              </Link>
-                            )}
                           </div>
                           </div>
                         ))}
@@ -696,7 +798,7 @@ export default function ProDashboardPage() {
               </div>
 
               {/* ═══════════════════════════════════════════════════════
-                  RIGHT COLUMN — Quick Actions + Schedule + Summary
+                  RIGHT COLUMN — Calendar
               ═══════════════════════════════════════════════════════ */}
               <div className="space-y-6">
 
@@ -757,130 +859,6 @@ export default function ProDashboardPage() {
                   </div>
                 </div>
 
-                {/* Quick Actions */}
-                <div className="bg-white rounded-[16px] border border-[#E5E7EB] shadow-[0_2px_8px_rgba(0,0,0,0.04)] p-6">
-                  <h3 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-4">Quick Actions</h3>
-                  <div className="space-y-3">
-                    <Link href="/pro/walk-in">
-                      <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl p-4 flex items-center gap-4 hover:shadow-lg hover:-translate-y-0.5 transition-all cursor-pointer group">
-                        <div className="w-10 h-10 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
-                          <UserPlus className="w-5 h-5 text-white" />
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-sm font-bold text-white">Walk-in Patient</p>
-                          <p className="text-[11px] font-medium text-indigo-100 mt-0.5">Register &amp; consult instantly</p>
-                        </div>
-                      </div>
-                    </Link>
-
-                    <Link href="/pro/patients">
-                      <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 flex items-center gap-4 hover:border-indigo-300 hover:bg-indigo-50/50 transition-all cursor-pointer group">
-                        <div className="w-10 h-10 rounded-lg bg-white border border-gray-200 shadow-sm flex items-center justify-center flex-shrink-0 group-hover:border-indigo-300">
-                          <Search className="w-5 h-5 text-gray-600 group-hover:text-indigo-600" />
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-sm font-bold text-gray-900 group-hover:text-indigo-900">Patient Search</p>
-                          <p className="text-[11px] font-medium text-gray-500 mt-0.5">Find any patient record</p>
-                        </div>
-                      </div>
-                    </Link>
-
-                    <Link href="/pro/prescribe">
-                      <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 flex items-center gap-4 hover:border-purple-300 hover:bg-purple-50/50 transition-all cursor-pointer group">
-                        <div className="w-10 h-10 rounded-lg bg-white border border-gray-200 shadow-sm flex items-center justify-center flex-shrink-0 group-hover:border-purple-300">
-                          <PenTool className="w-5 h-5 text-gray-600 group-hover:text-purple-600" />
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-sm font-bold text-gray-900 group-hover:text-purple-900">Write Prescription</p>
-                          <p className="text-[11px] font-medium text-gray-500 mt-0.5">Quick Rx for any patient</p>
-                        </div>
-                      </div>
-                    </Link>
-
-                    <Link href="/pro/emr">
-                      <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 flex items-center gap-4 hover:border-emerald-300 hover:bg-emerald-50/50 transition-all cursor-pointer group">
-                        <div className="w-10 h-10 rounded-lg bg-white border border-gray-200 shadow-sm flex items-center justify-center flex-shrink-0 group-hover:border-emerald-300">
-                          <FileText className="w-5 h-5 text-gray-600 group-hover:text-emerald-600" />
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-sm font-bold text-gray-900 group-hover:text-emerald-900">Open EMR Builder</p>
-                          <p className="text-[11px] font-medium text-gray-500 mt-0.5">Notes &amp; full templates</p>
-                        </div>
-                      </div>
-                    </Link>
-                  </div>
-                </div>
-
-                {/* Selected date schedule (mini view) */}
-                <div className="bg-white rounded-[16px] border border-[#E5E7EB] shadow-[0_2px_8px_rgba(0,0,0,0.04)] p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">
-                      {getDateLabel(selectedDate)}&apos;s Schedule
-                    </h3>
-                    {!queueLoading && queuePatients.length > 0 && (
-                      <span className="text-[10px] font-bold px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full border border-indigo-100">
-                        {queuePatients.length} patient{queuePatients.length !== 1 ? "s" : ""}
-                      </span>
-                    )}
-                  </div>
-                  {queueLoading ? (
-                    <div className="space-y-3">
-                      <div className="h-8 bg-gray-50 rounded animate-pulse" />
-                      <div className="h-8 bg-gray-50 rounded animate-pulse" />
-                    </div>
-                  ) : queuePatients.length === 0 ? (
-                    <p className="text-xs font-medium text-gray-500 text-center py-4 bg-gray-50 rounded-lg">
-                      No appointments for {getDateLabel(selectedDate)}.
-                    </p>
-                  ) : (
-                    <div className="space-y-1">
-                      {queuePatients.map((scheduleItem) => (
-                        <div
-                          key={scheduleItem.appointmentId}
-                          className={cn("flex items-center gap-3 p-2.5 rounded-lg transition-colors hover:bg-gray-50", scheduleItem.status === "completed" && "opacity-50")}
-                        >
-                          <span className="text-xs font-bold text-gray-500 w-12 flex-shrink-0">{scheduleItem.time}</span>
-                          <span className={cn("text-xs flex-1 truncate", scheduleItem.status === "in-session" ? "font-bold text-emerald-600" : "font-semibold text-gray-900")}>
-                            {scheduleItem.name}
-                          </span>
-                          {scheduleItem.status === "completed"  && <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-0.5 rounded">Done</span>}
-                          {scheduleItem.status === "in-session" && <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded animate-pulse">Now</span>}
-                          {scheduleItem.mode === "video" && scheduleItem.status !== "completed" && (
-                            <Video className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Monthly Summary */}
-                <div className="bg-gradient-to-b from-gray-50 to-white rounded-[16px] border border-[#E5E7EB] shadow-[0_2px_8px_rgba(0,0,0,0.04)] p-6">
-                  <div className="flex items-center gap-2 mb-1">
-                    <History className="w-4 h-4 text-gray-400"/>
-                    <h3 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Monthly Summary</h3>
-                  </div>
-                  <p className="text-sm font-bold text-gray-900 mb-4">
-                    {new Date(calendarYear, calendarMonth - 1, 1).toLocaleString(
-                      "en-IN",
-                      { month: "long", year: "numeric" },
-                    )}
-                  </p>
-                  <div className="space-y-3">
-                    {[
-                      { label: "Consultations", value: analytics ? String(analytics.completedThisMonth) : "0" },
-                      { label: "Prescriptions",  value: prescriptions ? String(prescriptions.length) : "0" },
-                      { label: "Revenue",        value: analytics ? `₹${analytics.revenueThisMonth.toLocaleString()}` : "₹0" },
-                      { label: "Upcoming",       value: String(upcomingAppointments.length) },
-                      { label: "Booked This Month", value: String(bookedThisMonth) },
-                    ].map((s) => (
-                      <div key={s.label} className="flex justify-between items-center text-sm">
-                        <span className="font-medium text-gray-600">{s.label}</span>
-                        <span className="font-bold text-gray-900">{s.value}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
               </div>
             </div>
           </>

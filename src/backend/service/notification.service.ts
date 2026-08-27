@@ -1,4 +1,5 @@
 import { NotificationRepository } from "../repo/notification.repo";
+import { AppointmentsRepository } from "../repo/appointments.repo";
 import { AuthUser } from "@/shared/auth/auth.types";
 
 function timeAgo(dateStr: string): string {
@@ -15,6 +16,13 @@ function timeAgo(dateStr: string): string {
 
 export class NotificationService {
   static async getNotifications(authUser: AuthUser) {
+    if (authUser.role === "patient") {
+      const patientId = await AppointmentsRepository.getPatientIdFromUserId(authUser.id);
+      if (patientId) {
+        await NotificationRepository.processMissedAppointmentsForPatient(patientId, authUser.id);
+      }
+    }
+
     const data = await NotificationRepository.getNotifications(authUser.id);
 
     return (data ?? []).map((row: any) => ({

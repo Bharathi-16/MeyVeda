@@ -103,11 +103,6 @@ export async function updatePractitionerSettings(
 }
 
 // ── Per-date calendar overrides (holiday/leave/custom hours) ──────────────
-// NOTE: backend support for this (a calendar_availability table + route) is
-// a known gap tracked separately — these calls hit the intended future route
-// naming convention (`/api/availability/calendar`) but will fail until that
-// backend work lands. Callers must handle the rejection gracefully rather
-// than assuming success.
 export type CalendarAvailabilityRow = {
   date: string; // YYYY-MM-DD
   working_start: string;

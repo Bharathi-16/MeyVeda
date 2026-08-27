@@ -132,3 +132,28 @@ export function useAdminMedicines() {
     return response.data;
   }, []);
 }
+
+export type AuditLogEntry = {
+  id: string;
+  actor_user_id: string | null;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  patient_id: string | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  metadata: Record<string, any> | null;
+  created_at: string;
+  actor: { id: string; email: string | null; mobile: string | null; role: string } | null;
+};
+
+export function useAdminAuditLogs(filters: { module?: string; search?: string } = {}) {
+  return useQuery<AuditLogEntry[]>(async () => {
+    const params = new URLSearchParams();
+    if (filters.module) params.set("module", filters.module);
+    if (filters.search) params.set("search", filters.search);
+    const qs = params.toString();
+    const response = await apiClient<{ data: AuditLogEntry[] }>(`/api/admin/audit-logs${qs ? `?${qs}` : ""}`);
+    return response.data;
+  }, [filters.module, filters.search]);
+}

@@ -175,20 +175,6 @@ export default function ApothecaryPage() {
           <h1 className="font-display text-2xl font-semibold text-foreground">Apothecary</h1>
           <p className="text-sm text-muted-foreground mt-1">Prescribed formulations & wellness essentials</p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <button className="flex items-center gap-2 bg-white border border-border px-4 py-2 rounded-xl text-sm font-medium hover:border-herb-green/30 transition-colors">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-                <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" />
-                <path d="M1 1h4l2.68 13.39a2 2 0 002 1.61h9.72a2 2 0 001.98-1.67L23 6H6" />
-              </svg>
-              Cart
-              <span className="bg-copper text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center">
-                {cart.length}
-              </span>
-            </button>
-          </div>
-        </div>
       </div>
 
       {/* Prescription upload */}

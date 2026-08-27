@@ -2,17 +2,63 @@
 
 import Link from "next/link";
 import { useAuth } from "@/contexts/auth-context";
-import { Search, Bell, Settings, Menu } from "lucide-react";
+import { useProfileCompletion } from "@/hooks/use-profile-completion";
+import { Bell, Menu } from "lucide-react";
 import { usePathname } from "next/navigation";
 
 interface AppHeaderProps {
   onMenuClick: () => void;
 }
 
+function CompletionRing({ pct }: { pct: number }) {
+  const size = 34;
+  const stroke = 3.5;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference * (1 - pct / 100);
+  const gradientId = "header-completion-ring-gradient";
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="flex-shrink-0 -rotate-90">
+      <defs>
+        <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#3B82F6" />
+          <stop offset="100%" stopColor="#8B5CF6" />
+        </linearGradient>
+      </defs>
+      <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#E0E7FF" strokeWidth={stroke} />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        fill="none"
+        stroke={`url(#${gradientId})`}
+        strokeWidth={stroke}
+        strokeLinecap="round"
+        strokeDasharray={circumference}
+        strokeDashoffset={offset}
+        className="transition-all duration-500"
+      />
+      <text
+        x="50%"
+        y="50%"
+        textAnchor="middle"
+        dominantBaseline="central"
+        transform={`rotate(90 ${size / 2} ${size / 2})`}
+        className="fill-indigo-700 font-bold"
+        style={{ fontSize: 9.5 }}
+      >
+        {pct}%
+      </text>
+    </svg>
+  );
+}
+
 export function AppHeader({ onMenuClick }: AppHeaderProps) {
   const { user } = useAuth();
   const pathname = usePathname();
   const isProRoute = pathname?.startsWith("/pro");
+  const completion = useProfileCompletion();
 
   const initials = user?.name
     ? user.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()
@@ -38,30 +84,26 @@ export function AppHeader({ onMenuClick }: AppHeaderProps) {
         </Link>
       </div>
 
-      {/* Center: Search Bar (Desktop) */}
-      {!isProRoute && (
-        <div className="flex-1 max-w-md hidden sm:block">
-          <div className="relative group">
-            <Search
-              size={16}
-              className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground/60 group-focus-within:text-herb-green transition-colors"
-            />
-            <input
-              type="text"
-              placeholder="Search practitioners, records, health plans..."
-              className="w-full pl-10 pr-4 py-2 bg-neutral-50 hover:bg-neutral-100/80 border border-neutral-200/50 rounded-2xl text-xs font-medium placeholder:text-muted-foreground/75 focus:outline-none focus:border-herb-green/50 focus:bg-white focus:ring-4 focus:ring-herb-green/5 transition-all duration-200 text-foreground"
-            />
-          </div>
-        </div>
-      )}
-
       {/* Right: Actions */}
       <div className="ml-auto flex items-center gap-2.5 flex-shrink-0">
-        {/* Mobile Search Button */}
-        {!isProRoute && (
-          <button className="sm:hidden p-2.5 rounded-xl hover:bg-neutral-100 text-neutral-600 transition-all active:scale-95">
-            <Search size={18} />
-          </button>
+        {/* Profile completion indicator — only while the profile is incomplete */}
+        {completion.applicable && !completion.loading && completion.completed < completion.total && (
+          <Link href="/profile/create-profile">
+            <div className="hidden sm:flex items-center gap-3 pl-2.5 pr-5 py-2 rounded-full border border-indigo-100 bg-gradient-to-br from-blue-50 to-indigo-50/80 hover:border-indigo-200 hover:shadow-sm hover:shadow-indigo-200/60 transition-all duration-300 cursor-pointer">
+              <CompletionRing pct={completion.pct} />
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[12.5px] font-semibold text-indigo-900 leading-none whitespace-nowrap">
+                  Complete Your Profile
+                </span>
+                <div className="w-36 h-[3px] rounded-full bg-indigo-100 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-blue-500 to-purple-500 transition-all duration-500"
+                    style={{ width: `${completion.pct}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          </Link>
         )}
 
         {/* Notifications */}
@@ -69,13 +111,6 @@ export function AppHeader({ onMenuClick }: AppHeaderProps) {
           <button className="relative p-2.5 rounded-xl hover:bg-neutral-100 text-neutral-600 transition-all active:scale-95">
             <Bell size={18} />
             <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-copper border border-white animate-pulse" />
-          </button>
-        </Link>
-
-        {/* Settings */}
-        <Link href="/profile?tab=settings">
-          <button className="p-2.5 rounded-xl hover:bg-neutral-100 text-neutral-600 transition-all active:scale-95">
-            <Settings size={18} />
           </button>
         </Link>
 

@@ -1,13 +1,16 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { PractitionerCard } from "@/components/PractitionerCard";
 import { DISCIPLINES } from "@/lib/data";
 import { usePractitioners, useDiscoverMetadata } from "@/hooks/use-discover";
 import { useQuery } from "@/hooks/useQuery";
+import { useFavorites } from "@/hooks/use-favorites";
 import { apiClient } from "@/shared/api/api-client";
 import type { AYUSHDiscipline } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { ENABLE_VIDEO_CONSULTATION } from "@/lib/feature-flags";
+import { useAuth } from "@/contexts/auth-context";
 
 function useNewDiscoverDoctors(filters?: {
   specialty?: string;
@@ -35,22 +38,23 @@ function useNewDiscoverDoctors(filters?: {
 }
 import {
   Search,
-  Mic,
-  ChevronLeft,
-  ChevronRight,
+  ChevronUp,
   X,
   Sparkles,
   Filter,
   ChevronDown,
   Check,
-  Globe,
   Calendar,
   Video,
   Award,
   ShieldCheck,
-  Zap,
-  Activity
+  Activity,
+  MapPin,
+  Heart
 } from "lucide-react";
+
+const PAGE_SIZE = 4;
+const SHOW_EXPLORE_SPECIALTIES = false;
 
 export default function DiscoverPage() {
   const [selected, setSelected] = useState<AYUSHDiscipline | null>(null);
@@ -65,8 +69,16 @@ export default function DiscoverPage() {
   const [language, setLanguage] = useState<string | null>(null); // null = any, English, Hindi, Tamil
   const [experienceMin, setExperienceMin] = useState<number | null>(null); // null = any, 5, 10
   const [gender, setGender] = useState<string | null>(null); // null = any, Male, Female
+  const [stateFilter, setStateFilter] = useState<string | null>(null); // null = any state
+  const [cityFilter, setCityFilter] = useState<string | null>(null); // null = any city in the state
+  const [locationQuery, setLocationQuery] = useState(""); // search box inside the combined Location dropdown
+  const [favoritesOnly, setFavoritesOnly] = useState<boolean>(false);
+
+  const { user } = useAuth();
+  const { favoriteIds, toggleFavorite } = useFavorites(user?.id);
 
   const [sortBy, setSortBy] = useState("relevance");
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   // Specialty slider ref
   const specialtyScrollRef = useRef<HTMLDivElement>(null);
@@ -102,16 +114,18 @@ export default function DiscoverPage() {
   // Map new doctor profiles to standard Practitioner interface shape
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mappedNewDocs = (newDoctors || []).map((doc: any) => {
-    const spec = doc.specializations?.[0] || "Ayurveda";
+    const specs: string[] = doc.specializations || [];
+    const spec = specs[0] || "Ayurveda";
     const initials = doc.full_name?.split(" ").filter(Boolean).map((n: string) => n[0]).join("").slice(0, 2).toUpperCase() || "DR";
     return {
       id: doc.id,
       name: doc.full_name,
       specialty: spec,
-      rating: 4.8,
-      reviews: 18,
+      specialties: specs,
+      rating: Number(doc.rating_avg ?? 0),
+      reviews: doc.rating_count ?? 0,
       discipline: "Ayurveda" as const,
-      experience: 8,
+      experience: doc.experience_years ?? 0,
       location: "Online",
       isVerified: true,
       fee: Math.round((doc.consultation_fee ?? 0) / 100),
@@ -120,8 +134,13 @@ export default function DiscoverPage() {
       avatar: initials,
       hprId: doc.verifications?.[0]?.hpr_id || "HPR-PENDING",
       languages: doc.languages || ["English"],
-      qualifications: ["BAMS"],
+      qualifications: doc.qualifications?.length ? doc.qualifications : ["BAMS"],
       about: `${doc.full_name} is a verified specialist doctor on MeyVeda.`,
+      gender: doc.gender || "",
+      state: doc.state || "",
+      city: doc.city || "",
+      clinicName: doc.clinic_name || "",
+      clinicAddress: doc.clinic_address || "",
     };
   });
 
@@ -140,6 +159,35 @@ export default function DiscoverPage() {
     seenIds.add(doc.id);
     return true;
   });
+
+  // Location filter options come from the practitioners actually on the platform,
+  // so every option yields results and the city list follows the chosen state.
+  const stateOptions = Array.from(
+    new Set(filtered.map((doc) => (doc.state || "").trim()).filter(Boolean))
+  ).sort((a, b) => a.localeCompare(b));
+
+  const cityOptions = Array.from(
+    new Set(
+      filtered
+        .filter((doc) => !stateFilter || (doc.state || "").trim() === stateFilter)
+        .map((doc) => (doc.city || "").trim())
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+
+  // Narrowed by whatever's typed into the Location dropdown's search box
+  const locationQueryLower = locationQuery.trim().toLowerCase();
+  const matchedStateOptions = stateOptions.filter((s) => s.toLowerCase().includes(locationQueryLower));
+  const matchedCityOptions = cityOptions.filter((c) => c.toLowerCase().includes(locationQueryLower));
+
+  // Client-side State / City Filtering — uses each doctor's saved practice location
+  if (stateFilter !== null) {
+    filtered = filtered.filter(doc => (doc.state || "").trim() === stateFilter);
+  }
+
+  if (cityFilter !== null) {
+    filtered = filtered.filter(doc => (doc.city || "").trim() === cityFilter);
+  }
 
   // Client-side Fee Filtering
   if (feeMax !== null) {
@@ -172,13 +220,14 @@ export default function DiscoverPage() {
     filtered = filtered.filter(doc => doc.experience >= experienceMin);
   }
 
-  // Client-side Gender Filtering
+  // Client-side Gender Filtering — uses the doctor's actual saved gender
   if (gender !== null) {
-    filtered = filtered.filter(doc => {
-      // Deterministic mock gender based on name hash (Ramesh = Male, Bharathi = Female, etc.)
-      const docGender = (doc.name.charCodeAt(0) + doc.name.charCodeAt(doc.name.length - 1)) % 2 === 0 ? "Male" : "Female";
-      return docGender.toLowerCase() === gender.toLowerCase();
-    });
+    filtered = filtered.filter(doc => (doc.gender || "").toLowerCase() === gender.toLowerCase());
+  }
+
+  // Client-side Favorites Filtering — only the current patient's favorited doctors
+  if (favoritesOnly) {
+    filtered = filtered.filter(doc => favoriteIds.has(doc.id));
   }
 
   // Sorting
@@ -197,6 +246,14 @@ export default function DiscoverPage() {
     });
   }
 
+  // Reset pagination whenever a filter, search, discipline, or sort changes.
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [selected, searchQuery, videoConsult, feeMax, availableToday, language, experienceMin, gender, stateFilter, cityFilter, favoritesOnly, sortBy]);
+
+  const visibleList = filtered.slice(0, visibleCount);
+  const hasMore = filtered.length > visibleCount;
+
   const isAnyLoading = loading || newDocsLoading;
 
   // Clear all filter values
@@ -207,20 +264,16 @@ export default function DiscoverPage() {
     setLanguage(null);
     setExperienceMin(null);
     setGender(null);
+    setStateFilter(null);
+    setCityFilter(null);
+    setFavoritesOnly(false);
     setSelected(null);
     setSearchQuery("");
   };
 
-  // Scroll specialty list
-  const scrollSpecialties = (direction: "left" | "right") => {
-    if (specialtyScrollRef.current) {
-      const scrollAmount = direction === "left" ? -240 : 240;
-      specialtyScrollRef.current.scrollBy({ left: scrollAmount, behavior: "smooth" });
-    }
-  };
 
   return (
-    <div className="px-4 sm:px-6 lg:px-8 py-8 max-w-7xl mx-auto space-y-10">
+    <div className="px-4 sm:px-6 lg:px-8 py-8 max-w-[92rem] mx-auto space-y-8">
       
       {/* ─── HERO SECTION ─── */}
       <div className="relative overflow-hidden bg-gradient-to-br from-indigo-50/40 via-white to-teal-50/20 border border-neutral-150/70 rounded-[2.5rem] p-8 md:p-12 shadow-xs">
@@ -240,76 +293,8 @@ export default function DiscoverPage() {
               <span className="text-herb-green">Top Specialists</span>
             </h1>
             <p className="text-sm md:text-base text-muted-foreground leading-relaxed max-w-lg font-medium">
-              Consult with verified Ayurveda, Yoga, Naturopathy, Unani, Siddha, and Homeopathy practitioners. In-clinic visits or video calls.
+              Consult with verified Ayurveda, Yoga, Naturopathy, Unani, Siddha, and Homeopathy practitioners.{ENABLE_VIDEO_CONSULTATION ? " In-clinic visits or video calls." : " In-clinic visits."}
             </p>
-
-            {/* Google Search Style Bar */}
-            <div className="relative max-w-xl group mt-6 pt-1">
-              <div className="w-full pl-5 pr-5 py-1 bg-white hover:bg-neutral-50 border border-neutral-200/90 focus-within:bg-white focus-within:border-primary/50 focus-within:ring-4 focus-within:ring-primary/8 rounded-2.5xl shadow-md transition-all duration-300 flex items-center gap-3">
-                <Search size={18} className="text-muted-foreground/60 group-focus-within:text-herb-green transition-colors" />
-                <input
-                  type="text"
-                  placeholder="Search symptoms, doctors, specialties (e.g. Back pain, Panchakarma)..."
-                  value={searchQuery}
-                  onChange={(e) => {
-                    setSearchQuery(e.target.value);
-                    setShowSymptoms(e.target.value.length > 0);
-                  }}
-                  onFocus={() => setShowSymptoms(true)}
-                  onBlur={() => setTimeout(() => setShowSymptoms(false), 200)}
-                  className="w-full py-3.5 bg-transparent text-sm placeholder:text-muted-foreground/75 focus:outline-none text-foreground font-semibold"
-                />
-                
-                {searchQuery && (
-                  <button 
-                    onClick={() => { setSearchQuery(""); setShowSymptoms(false); }}
-                    className="p-1 rounded-full hover:bg-neutral-100 text-muted-foreground transition-all"
-                  >
-                    <X size={14} />
-                  </button>
-                )}
-
-                <div className="h-5 w-px bg-neutral-200" />
-                
-                <button title="Voice Search" className="p-1.5 rounded-full hover:bg-neutral-100 text-muted-foreground/80 hover:text-foreground transition-all">
-                  <Mic size={15} />
-                </button>
-              </div>
-
-              {/* Autocomplete Symtoms Overlay */}
-              {showSymptoms && (
-                <div className="absolute left-0 right-0 top-[calc(100%+8px)] bg-white border border-neutral-200/80 rounded-2.5xl shadow-2xl z-50 overflow-hidden divide-y divide-neutral-100/70 animate-in fade-in slide-in-from-top-2 duration-200">
-                  <div className="p-2 max-h-64 overflow-y-auto">
-                    <p className="text-[10px] text-muted-foreground/80 px-3.5 py-2 font-extrabold uppercase tracking-widest flex items-center gap-1">
-                      <Sparkles size={10} className="text-herb-green fill-herb-green" />
-                      Common Symptoms & Treatment Focus
-                    </p>
-                    {dynamicSymptoms.filter(
-                      (s) => !searchQuery || s.toLowerCase().includes(searchQuery.toLowerCase())
-                    ).length > 0 ? (
-                      dynamicSymptoms
-                        .filter((s) => !searchQuery || s.toLowerCase().includes(searchQuery.toLowerCase()))
-                        .slice(0, 7)
-                        .map((symptom) => (
-                          <button
-                            key={symptom}
-                            onMouseDown={() => {
-                              setSearchQuery(symptom);
-                              setShowSymptoms(false);
-                            }}
-                            className="w-full text-left px-3.5 py-2 text-xs font-semibold rounded-xl hover:bg-herb-green/5 hover:text-herb-green transition-all flex items-center gap-2.5"
-                          >
-                            <Search size={12} className="text-muted-foreground/50" />
-                            <span className="text-foreground">{symptom}</span>
-                          </button>
-                        ))
-                    ) : (
-                      <p className="text-xs text-muted-foreground p-3 text-center">No symptom matches. Press Enter to search.</p>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
           </div>
 
           {/* Hero illustration (Right) */}
@@ -328,27 +313,13 @@ export default function DiscoverPage() {
       </div>
 
       {/* ─── EXPLORE SPECIALTIES (CAROUSEL) ─── */}
+      {SHOW_EXPLORE_SPECIALTIES && (
       <div className="space-y-4">
         <div className="flex items-center justify-between px-1">
           <h2 className="text-[10px] font-extrabold text-muted-foreground/80 uppercase tracking-widest flex items-center gap-1.5">
             <Activity size={12} className="text-herb-green" />
             Explore Specialties
           </h2>
-          {/* Slider controls */}
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => scrollSpecialties("left")}
-              className="p-1.5 rounded-lg border border-neutral-200/80 bg-white hover:bg-neutral-50 hover:border-neutral-300 text-neutral-600 transition-all active:scale-90"
-            >
-              <ChevronLeft size={14} />
-            </button>
-            <button
-              onClick={() => scrollSpecialties("right")}
-              className="p-1.5 rounded-lg border border-neutral-200/80 bg-white hover:bg-neutral-50 hover:border-neutral-300 text-neutral-600 transition-all active:scale-90"
-            >
-              <ChevronRight size={14} />
-            </button>
-          </div>
         </div>
 
         {/* Scroll list wrapper */}
@@ -414,15 +385,16 @@ export default function DiscoverPage() {
           })}
         </div>
       </div>
+      )}
 
       {/* ─── DROPDOWN FILTERS BAR ─── */}
-      <div className="space-y-4 border-t border-neutral-150/75 pt-7">
+      <div className={cn("space-y-4", SHOW_EXPLORE_SPECIALTIES ? "border-t border-neutral-150/75 pt-7" : "")}>
         <div className="flex items-center justify-between px-1">
           <h2 className="text-[10px] font-extrabold text-muted-foreground/80 uppercase tracking-widest flex items-center gap-1.5">
             <Filter size={12} className="text-herb-green" />
             Filters & Sorting
           </h2>
-          {(videoConsult !== null || feeMax !== null || availableToday || language !== null || experienceMin !== null || gender !== null) && (
+          {(videoConsult !== null || feeMax !== null || availableToday || language !== null || experienceMin !== null || gender !== null || stateFilter !== null || cityFilter !== null || favoritesOnly) && (
             <button
               onClick={clearAllFilters}
               className="text-[10px] font-extrabold text-red-500 hover:text-red-600 transition-colors flex items-center gap-1 bg-red-50 hover:bg-red-100/60 px-3 py-1 rounded-full border border-red-100"
@@ -433,10 +405,73 @@ export default function DiscoverPage() {
           )}
         </div>
 
+        {/* Search Bar */}
+        <div className="relative group px-1 max-w-md">
+          <div className="w-full pl-4 pr-4 py-1 bg-white hover:bg-neutral-50 border border-neutral-200/90 focus-within:bg-white focus-within:border-herb-green/50 focus-within:ring-4 focus-within:ring-herb-green/8 rounded-xl shadow-2xs transition-all duration-300 flex items-center gap-2.5">
+            <Search size={15} className="text-muted-foreground/60 group-focus-within:text-herb-green transition-colors flex-shrink-0" />
+            <input
+              type="text"
+              placeholder="Search symptoms, doctors, specialties..."
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setShowSymptoms(e.target.value.length > 0);
+              }}
+              onFocus={() => setShowSymptoms(true)}
+              onBlur={() => setTimeout(() => setShowSymptoms(false), 200)}
+              className="w-full py-2.5 bg-transparent text-xs placeholder:text-muted-foreground/75 focus:outline-none text-foreground font-semibold"
+            />
+
+            {searchQuery && (
+              <button
+                onClick={() => { setSearchQuery(""); setShowSymptoms(false); }}
+                className="p-1 rounded-full hover:bg-neutral-100 text-muted-foreground transition-all flex-shrink-0"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+
+          {/* Autocomplete Symtoms Overlay */}
+          {showSymptoms && (
+            <div className="absolute left-0 right-0 top-[calc(100%+8px)] bg-white border border-neutral-200/80 rounded-2xl shadow-2xl z-30 overflow-hidden divide-y divide-neutral-100/70 animate-in fade-in slide-in-from-top-2 duration-200">
+              <div className="p-2 max-h-64 overflow-y-auto">
+                <p className="text-[10px] text-muted-foreground/80 px-3.5 py-2 font-extrabold uppercase tracking-widest flex items-center gap-1">
+                  <Sparkles size={10} className="text-herb-green fill-herb-green" />
+                  Common Symptoms & Treatment Focus
+                </p>
+                {dynamicSymptoms.filter(
+                  (s) => !searchQuery || s.toLowerCase().includes(searchQuery.toLowerCase())
+                ).length > 0 ? (
+                  dynamicSymptoms
+                    .filter((s) => !searchQuery || s.toLowerCase().includes(searchQuery.toLowerCase()))
+                    .slice(0, 7)
+                    .map((symptom) => (
+                      <button
+                        key={symptom}
+                        onMouseDown={() => {
+                          setSearchQuery(symptom);
+                          setShowSymptoms(false);
+                        }}
+                        className="w-full text-left px-3.5 py-2 text-xs font-semibold rounded-xl hover:bg-herb-green/5 hover:text-herb-green transition-all flex items-center gap-2.5"
+                      >
+                        <Search size={12} className="text-muted-foreground/50" />
+                        <span className="text-foreground">{symptom}</span>
+                      </button>
+                    ))
+                ) : (
+                  <p className="text-xs text-muted-foreground p-3 text-center">No symptom matches. Press Enter to search.</p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Filters Scrollable Strip */}
         <div className="flex flex-wrap items-center gap-2 px-1">
-          
-          {/* 1. Consultation Mode Dropdown */}
+
+          {/* 1. Consultation Mode Dropdown — hidden in Phase 1 (in-clinic only) */}
+          {ENABLE_VIDEO_CONSULTATION && (
           <div className="relative">
             <button
               onClick={() => setOpenFilter(openFilter === "mode" ? null : "mode")}
@@ -481,6 +516,7 @@ export default function DiscoverPage() {
               </>
             )}
           </div>
+          )}
 
           {/* 2. Fee Dropdown */}
           <div className="relative">
@@ -542,53 +578,6 @@ export default function DiscoverPage() {
             <span>Available Today</span>
             {availableToday && <Check size={12} className="text-herb-green" />}
           </button>
-
-          {/* 4. Language Dropdown */}
-          <div className="relative">
-            <button
-              onClick={() => setOpenFilter(openFilter === "language" ? null : "language")}
-              className={cn(
-                "px-3.5 py-2 rounded-xl border text-xs font-bold tracking-wide flex items-center gap-2 shadow-2xs transition-all duration-200 cursor-pointer",
-                language !== null
-                  ? "bg-herb-green/5 border-herb-green text-herb-green ring-1 ring-herb-green/20"
-                  : "bg-white hover:bg-neutral-50 hover:border-neutral-300 border-neutral-200 text-neutral-600"
-              )}
-            >
-              <Globe size={13} className="text-muted-foreground/80" />
-              <span>
-                {language !== null ? language : "Languages"}
-              </span>
-              <ChevronDown size={12} className="opacity-70" />
-            </button>
-
-            {openFilter === "language" && (
-              <>
-                <div className="fixed inset-0 z-20" onClick={() => setOpenFilter(null)} />
-                <div className="absolute left-0 top-[calc(100%+6px)] z-30 bg-white border border-neutral-200/80 rounded-2xl shadow-xl min-w-[180px] py-1.5 animate-in fade-in slide-in-from-top-1.5 duration-150">
-                  {[
-                    { label: "Any Language", value: null },
-                    { label: "English", value: "English" },
-                    { label: "Hindi", value: "Hindi" },
-                    { label: "Tamil", value: "Tamil" }
-                  ].map((opt) => (
-                    <button
-                      key={opt.label}
-                      onClick={() => {
-                        setLanguage(opt.value);
-                        setOpenFilter(null);
-                      }}
-                      className="w-full text-left px-4 py-2 text-xs font-semibold hover:bg-neutral-50 transition-colors flex items-center justify-between"
-                    >
-                      <span className={opt.value === language ? "text-herb-green" : "text-neutral-600"}>
-                        {opt.label}
-                      </span>
-                      {language === opt.value && <Check size={12} className="text-herb-green" />}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
 
           {/* 5. Experience Dropdown */}
           <div className="relative">
@@ -679,135 +668,205 @@ export default function DiscoverPage() {
             )}
           </div>
 
+          {/* 7. Location Filter — one combined State + City picker with integrated search */}
+          <div className="relative">
+            <button
+              onClick={() => {
+                setOpenFilter(openFilter === "location" ? null : "location");
+                setLocationQuery("");
+              }}
+              className={cn(
+                "px-3.5 py-2 rounded-xl border text-xs font-bold tracking-wide flex items-center gap-2 shadow-2xs transition-all duration-200 cursor-pointer",
+                (stateFilter !== null || cityFilter !== null)
+                  ? "bg-herb-green/5 border-herb-green text-herb-green ring-1 ring-herb-green/20"
+                  : "bg-white hover:bg-neutral-50 hover:border-neutral-300 border-neutral-200 text-neutral-600"
+              )}
+            >
+              <MapPin size={13} className="text-muted-foreground/80" />
+              <span className="max-w-[160px] truncate">
+                {cityFilter && stateFilter
+                  ? `${cityFilter}, ${stateFilter}`
+                  : cityFilter ?? stateFilter ?? "Location"}
+              </span>
+              <ChevronDown size={12} className="opacity-70" />
+            </button>
+
+            {openFilter === "location" && (
+              <>
+                <div className="fixed inset-0 z-20" onClick={() => setOpenFilter(null)} />
+                <div className="absolute left-0 top-[calc(100%+6px)] z-30 bg-white border border-neutral-200/80 rounded-2xl shadow-xl w-[260px] overflow-hidden animate-in fade-in slide-in-from-top-1.5 duration-150">
+                  {/* Search — integrated directly into the dropdown */}
+                  <div className="relative border-b border-neutral-100 p-2">
+                    <Search size={13} className="absolute left-5 top-1/2 -translate-y-1/2 text-muted-foreground/60 pointer-events-none" />
+                    <input
+                      autoFocus
+                      type="text"
+                      value={locationQuery}
+                      onChange={(e) => setLocationQuery(e.target.value)}
+                      placeholder="Search location..."
+                      className="w-full pl-7 pr-2 py-1.5 text-xs font-semibold rounded-lg bg-neutral-50 focus:outline-none focus:bg-white focus:ring-2 focus:ring-herb-green/15 transition-all"
+                    />
+                  </div>
+
+                  {(stateFilter !== null || cityFilter !== null) && (
+                    <button
+                      onClick={() => {
+                        setStateFilter(null);
+                        setCityFilter(null);
+                        setOpenFilter(null);
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs font-semibold text-red-500 hover:bg-red-50 transition-colors flex items-center gap-1.5 border-b border-neutral-100"
+                    >
+                      <X size={10} className="stroke-[2.5]" />
+                      Clear Location
+                    </button>
+                  )}
+
+                  <div className="max-h-64 overflow-y-auto py-1.5">
+                    {/* States */}
+                    <p className="px-4 pt-1.5 pb-1 text-[9px] font-extrabold text-muted-foreground/70 uppercase tracking-widest">State</p>
+                    {matchedStateOptions.length === 0 ? (
+                      <p className="px-4 py-1.5 text-xs text-muted-foreground">No matching states</p>
+                    ) : (
+                      matchedStateOptions.map((opt) => (
+                        <button
+                          key={opt}
+                          onClick={() => {
+                            setStateFilter(opt);
+                            setCityFilter(null); // reset city whenever the state changes
+                          }}
+                          className="w-full text-left px-4 py-2 text-xs font-semibold hover:bg-neutral-50 transition-colors flex items-center justify-between gap-2"
+                        >
+                          <span className={opt === stateFilter ? "text-herb-green" : "text-neutral-600"}>{opt}</span>
+                          {stateFilter === opt && <Check size={12} className="text-herb-green flex-shrink-0" />}
+                        </button>
+                      ))
+                    )}
+
+                    {/* Cities — narrowed to the selected state, if any */}
+                    <p className="px-4 pt-2.5 pb-1 text-[9px] font-extrabold text-muted-foreground/70 uppercase tracking-widest">City</p>
+                    {matchedCityOptions.length === 0 ? (
+                      <p className="px-4 py-1.5 text-xs text-muted-foreground">
+                        {stateFilter ? "No cities in this state yet" : "No matching cities"}
+                      </p>
+                    ) : (
+                      matchedCityOptions.map((opt) => (
+                        <button
+                          key={opt}
+                          onClick={() => {
+                            setCityFilter(opt);
+                            setOpenFilter(null);
+                          }}
+                          className="w-full text-left px-4 py-2 text-xs font-semibold hover:bg-neutral-50 transition-colors flex items-center justify-between gap-2"
+                        >
+                          <span className={opt === cityFilter ? "text-herb-green" : "text-neutral-600"}>{opt}</span>
+                          {cityFilter === opt && <Check size={12} className="text-herb-green flex-shrink-0" />}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* 8. Favorites Toggle */}
+          <button
+            type="button"
+            onClick={() => setFavoritesOnly(!favoritesOnly)}
+            className={cn(
+              "px-3.5 py-2 rounded-xl border text-xs font-bold tracking-wide flex items-center gap-2 shadow-2xs transition-all duration-200 cursor-pointer",
+              favoritesOnly
+                ? "bg-red-50 border-red-200 text-red-600 ring-1 ring-red-200"
+                : "bg-white hover:bg-neutral-50 hover:border-neutral-300 border-neutral-200 text-neutral-600"
+            )}
+          >
+            <Heart size={13} className={cn("pointer-events-none", favoritesOnly ? "fill-red-500 text-red-500" : "text-muted-foreground/80")} />
+            <span>Favorites</span>
+            {favoritesOnly && <Check size={12} className="text-red-600" />}
+          </button>
+
         </div>
       </div>
 
-      {/* ─── MAIN DOCTORS LIST & SPLIT LAYOUT ─── */}
-      <div className="grid lg:grid-cols-12 gap-8 items-start">
-        
-        {/* Left Side: Doctor Feed (8 cols on large screens) */}
-        <div className="lg:col-span-8 space-y-6">
-          
-          {/* Result Count and Sorting Row */}
-          <div className="flex items-center justify-between px-1">
-            <div className="text-xs text-muted-foreground font-semibold flex items-center gap-1.5 select-none">
-              {isAnyLoading ? (
-                <span className="animate-pulse flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-herb-green animate-ping" />
-                  Loading practitioners...
-                </span>
-              ) : (
-                <>
-                  Found <span className="font-extrabold text-foreground font-mono bg-neutral-100 px-2 py-0.5 rounded-md">{filtered.length}</span> Verified Specialists
-                  {selected && <span className="font-bold text-herb-green"> in {selected}</span>}
-                </>
+      {/* ─── MAIN DOCTORS LIST ─── */}
+      <div className="space-y-6">
+        {/* Result Count Row */}
+        <div className="flex items-center justify-between px-1">
+          <div className="text-xs text-muted-foreground font-semibold flex items-center gap-1.5 select-none">
+            {isAnyLoading ? (
+              <span className="animate-pulse flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-herb-green animate-ping" />
+                Loading practitioners...
+              </span>
+            ) : (
+              <>
+                Found <span className="font-extrabold text-foreground font-mono bg-neutral-100 px-2 py-0.5 rounded-md">{filtered.length}</span> Verified Specialists
+                {selected && <span className="font-bold text-herb-green"> in {selected}</span>}
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Doctors Listings / Loading States / Empty States */}
+        {isAnyLoading ? (
+          <div className="flex flex-col items-center justify-center h-96 bg-white border border-neutral-150 rounded-[2rem] shadow-xs">
+            <div className="w-12 h-12 rounded-full border-3 border-herb-green border-t-transparent animate-spin" />
+            <p className="text-xs text-muted-foreground mt-4 font-bold">Matching certified specialists for you...</p>
+          </div>
+        ) : filtered.length > 0 ? (
+          <div className="bg-white/60 border border-neutral-150/70 rounded-[2rem] shadow-xs p-4 sm:p-5">
+            <div className="max-h-[calc(100vh-340px)] min-h-[420px] overflow-y-auto pr-1 space-y-5 scroll-smooth">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 items-stretch">
+                {visibleList.map((doc) => (
+                  <PractitionerCard
+                    key={doc.id}
+                    doctor={doc}
+                    isFavorite={favoriteIds.has(doc.id)}
+                    onToggleFavorite={() => toggleFavorite(doc.id)}
+                  />
+                ))}
+              </div>
+
+              {(hasMore || visibleCount > PAGE_SIZE) && (
+                <div className="flex justify-center items-center gap-3 pt-2 pb-1">
+                  {hasMore && (
+                    <button
+                      onClick={() => setVisibleCount((c) => Math.min(c + PAGE_SIZE, filtered.length))}
+                      className="inline-flex items-center gap-1.5 text-xs font-bold text-herb-green hover:text-herb-green-light px-4 py-2 rounded-full hover:bg-herb-green/5 transition-all cursor-pointer active:scale-[0.98]"
+                    >
+                      Show More
+                      <ChevronDown size={13} />
+                    </button>
+                  )}
+                  {visibleCount > PAGE_SIZE && (
+                    <button
+                      onClick={() => setVisibleCount(PAGE_SIZE)}
+                      className="inline-flex items-center gap-1.5 text-xs font-bold text-neutral-500 hover:text-foreground px-4 py-2 rounded-full hover:bg-neutral-100 transition-all cursor-pointer active:scale-[0.98]"
+                    >
+                      Show Less
+                      <ChevronUp size={13} />
+                    </button>
+                  )}
+                </div>
               )}
             </div>
-            
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="text-xs font-bold border border-neutral-200/80 rounded-xl px-3.5 py-2 bg-white text-muted-foreground hover:border-neutral-300 focus:outline-none focus:border-herb-green focus:ring-4 focus:ring-herb-green/5 cursor-pointer shadow-2xs transition-all"
+          </div>
+        ) : (
+          <div className="text-center py-20 bg-white rounded-[2rem] border border-neutral-150/70 shadow-xs space-y-4">
+            <span className="text-5xl inline-block animate-bounce">🌿</span>
+            <h3 className="text-base font-black text-foreground">No Specialists Found</h3>
+            <p className="text-xs text-muted-foreground max-w-xs mx-auto leading-relaxed font-medium">
+              We couldn&apos;t find matches under these filters. Try clearing some filters or refining your search keywords.
+            </p>
+            <button
+              onClick={clearAllFilters}
+              className="mt-2 text-xs font-bold bg-herb-green hover:bg-herb-green-light active:scale-95 text-white py-2 px-4.5 rounded-xl shadow-xs transition-all cursor-pointer"
             >
-              <option value="relevance">Sort: Relevance</option>
-              <option value="rating">Sort: Rating</option>
-              <option value="fee-low-high">Sort: Fee (Low to High)</option>
-              <option value="experience">Sort: Experience</option>
-            </select>
+              Clear All Filters
+            </button>
           </div>
-
-          {/* Doctors Listings / Loading States / Empty States */}
-          {isAnyLoading ? (
-            <div className="flex flex-col items-center justify-center h-96 bg-white border border-neutral-150 rounded-[2rem] shadow-xs">
-              <div className="w-12 h-12 rounded-full border-3 border-herb-green border-t-transparent animate-spin" />
-              <p className="text-xs text-muted-foreground mt-4 font-bold">Matching certified specialists for you...</p>
-            </div>
-          ) : filtered.length > 0 ? (
-            <div className="space-y-5">
-              {filtered.map((doc) => (
-                <PractitionerCard key={doc.id} doctor={doc} />
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-20 bg-white rounded-[2rem] border border-neutral-150/70 shadow-xs space-y-4">
-              <span className="text-5xl inline-block animate-bounce">🌿</span>
-              <h3 className="text-base font-black text-foreground">No Specialists Found</h3>
-              <p className="text-xs text-muted-foreground max-w-xs mx-auto leading-relaxed font-medium">
-                We couldn&apos;t find matches under these filters. Try clearing some filters or refining your search keywords.
-              </p>
-              <button
-                onClick={clearAllFilters}
-                className="mt-2 text-xs font-bold bg-herb-green hover:bg-herb-green-light active:scale-95 text-white py-2 px-4.5 rounded-xl shadow-xs transition-all cursor-pointer"
-              >
-                Clear All Filters
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Right Side: Trust & Value panel widgets (4 cols) (Hidden on mobile/tablet) */}
-        <div className="hidden lg:block lg:col-span-4 space-y-6">
-          
-          {/* Widget 1: Prakriti Dosha Assessment Callout */}
-          <div className="relative overflow-hidden bg-gradient-to-br from-indigo-900 to-indigo-950 text-white rounded-3xl p-6 shadow-md border border-indigo-900/30 group hover:shadow-lg transition-all duration-300">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full blur-2xl -mr-12 -mt-12 pointer-events-none" />
-            <div className="relative z-10 space-y-4">
-              <div className="w-9 h-9 bg-white/10 rounded-xl flex items-center justify-center text-indigo-200">
-                <Zap size={18} className="fill-indigo-300 text-indigo-300" />
-              </div>
-              <div className="space-y-1.5">
-                <h4 className="font-display font-extrabold text-sm text-white">Know Your Ayurvedic Body Constitution</h4>
-                <p className="text-[11px] text-indigo-200 leading-relaxed font-medium">
-                  Take our 5-minute Prakriti assessment to discover your body&apos;s dosha type and receive tailored clinical doctor pairings.
-                </p>
-              </div>
-              <button className="w-full mt-2.5 bg-white hover:bg-neutral-50 text-indigo-955 text-xs font-bold py-2.5 px-4 rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer">
-                <span>Start Assessment</span>
-                <ChevronRight size={12} className="stroke-[2.5]" />
-              </button>
-            </div>
-          </div>
-
-          {/* Widget 2: Security & Trust ABDM card */}
-          <div className="bg-white rounded-3xl p-5 border border-neutral-150/70 shadow-xs space-y-3.5">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/15 flex items-center justify-center text-emerald-600">
-                <ShieldCheck size={18} className="stroke-[2.5]" />
-              </div>
-              <div>
-                <h4 className="text-xs font-bold text-foreground">ABDM Secure & Compliant</h4>
-                <p className="text-[9px] text-muted-foreground uppercase tracking-wider font-extrabold">National Health Stack</p>
-              </div>
-            </div>
-            <p className="text-[11px] text-muted-foreground leading-relaxed font-medium">
-              MeyVeda is integrated with the Ayushman Bharat Digital Mission (ABDM). Your health records are encrypted, HIPAA compliant, and only shared with explicit consent.
-            </p>
-            <div className="pt-2 flex flex-wrap gap-1.5">
-              <span className="text-[9px] font-bold text-neutral-600 bg-neutral-50 border border-neutral-200/50 px-2 py-0.5 rounded">
-                HPR Certified
-              </span>
-              <span className="text-[9px] font-bold text-neutral-600 bg-neutral-50 border border-neutral-200/50 px-2 py-0.5 rounded">
-                ABHA Linked
-              </span>
-              <span className="text-[9px] font-bold text-neutral-600 bg-neutral-50 border border-neutral-200/50 px-2 py-0.5 rounded">
-                ISO 27001
-              </span>
-            </div>
-          </div>
-
-          {/* Widget 3: Daily Health Tip (Wellness Agni Agni Agni) */}
-          <div className="bg-gradient-to-br from-amber-500/5 to-orange-500/5 rounded-3xl p-5 border border-amber-500/10 shadow-xs space-y-3">
-            <div className="flex items-center gap-2.5">
-              <span className="text-xl">🍵</span>
-              <h4 className="text-xs font-bold text-amber-900">Daily Ayurvedic Wellness Tip</h4>
-            </div>
-            <p className="text-[11px] text-amber-850 leading-relaxed font-medium">
-              Agni (Digestive Fire) is the cornerstone of good health. Sip warm water or ginger tea throughout the day, and avoid cold beverages during meals to maintain steady digestive power.
-            </p>
-          </div>
-
-        </div>
-
+        )}
       </div>
     </div>
   );

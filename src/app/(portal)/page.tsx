@@ -11,6 +11,7 @@ import { usePractitioners } from "@/hooks/use-discover";
 import { usePatientProfile } from "@/hooks/use-profile";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
+import { ENABLE_VIDEO_CONSULTATION } from "@/lib/feature-flags";
 import {
   FileText, Download, User, Calendar, Pill, Heart, Award, Clock, ArrowRight,
   Sun, Sunrise, Sunset, Moon, Utensils, UtensilsCrossed, Check, X
@@ -50,7 +51,7 @@ const parseTiming = (timing: string) => {
 
 export default function HomePage() {
   const { user } = useAuth();
-  const firstName = user?.name?.split(" ")[0] ?? "there";
+  const displayName = user?.name?.trim() || "there";
   
   const [greeting, setGreeting] = useState("Good morning");
 
@@ -62,7 +63,7 @@ export default function HomePage() {
 
   // Fetch from backend
   const { data: practitioners } = usePractitioners();
-  const { data: appointments } = useAppointments(user?.id);
+  const { data: appointments, loading: appointmentsLoading } = useAppointments(user?.id);
   const { data: profile } = usePatientProfile(user?.id);
   const { data: upcomingCalls } = usePatientUpcomingCalls(user?.id);
 
@@ -130,14 +131,6 @@ export default function HomePage() {
 
   const hasUpcoming = upcomingAppointments.length > 0;
   const nextUpcoming = hasUpcoming ? upcomingAppointments[0] : null;
-
-  const aiQuestions = profile?.prakriti?.toLowerCase().includes('vata')
-    ? ["Balance Vata dosha", "Gut health tips", "Sleep routine", "Immunity boost"]
-    : profile?.prakriti?.toLowerCase().includes('pitta')
-      ? ["Balance Pitta dosha", "Cooling diet tips", "Sleep routine", "Immunity boost"]
-      : profile?.prakriti?.toLowerCase().includes('kapha')
-        ? ["Balance Kapha dosha", "Active workouts", "Gut health tips", "Immunity boost"]
-        : ["Gut health tips", "Daily routine", "Sleep routine", "Immunity boost"];
 
   const nextUpcomingCall = upcomingCalls?.[0];
   let showBanner = false;
@@ -233,7 +226,7 @@ export default function HomePage() {
       <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border/60 pb-6">
         <div>
           <h1 className="font-display text-3xl font-extrabold tracking-tight text-foreground">
-            {greeting}, {firstName} 👋
+            {greeting}, {displayName}
           </h1>
           <p className="text-sm text-muted-foreground mt-1.5">Here&apos;s your wellness overview and AYUSH companion updates.</p>
           {profile?.abhaId && (
@@ -243,10 +236,10 @@ export default function HomePage() {
           )}
         </div>
         {nextUpcoming && (
-          <Link href={`/consult?id=${nextUpcoming.consultationId || nextUpcoming.id}`}>
+          <Link href={ENABLE_VIDEO_CONSULTATION ? `/consult?id=${nextUpcoming.consultationId || nextUpcoming.id}` : "/appointments"}>
             <div className="flex items-center gap-2 bg-gradient-to-r from-herb-green to-herb-green-light text-white px-5 py-3 rounded-2xl text-sm font-semibold hover:shadow-lg hover:opacity-95 transition-all cursor-pointer shadow-sm active:scale-98">
-              <span>📹</span>
-              <span>Join Today&apos;s Consult</span>
+              <span>{ENABLE_VIDEO_CONSULTATION ? "📹" : "🏥"}</span>
+              <span>{ENABLE_VIDEO_CONSULTATION ? "Join Today's Consult" : "View Today's Appointment"}</span>
             </div>
           </Link>
         )}
@@ -256,10 +249,12 @@ export default function HomePage() {
         {/* Left column */}
         <div className="space-y-8">
           {/* Upcoming consult banner */}
-          {nextUpcoming ? (
+          {appointmentsLoading ? (
+            <div className="rounded-[24px] p-6 bg-neutral-100 animate-pulse h-[220px]" />
+          ) : nextUpcoming ? (
             <div className="space-y-0">
               {/* Main Hero Card for Nearest Appointment */}
-              <div className="bg-gradient-to-br from-herb-green via-herb-green-light to-herb-green/95 rounded-[24px] p-6 text-white relative overflow-hidden shadow-lg shadow-herb-green/20 border border-herb-green/30 transition-all duration-300">
+              <div className="bg-gradient-to-br from-herb-green via-herb-green-light to-herb-green/95 rounded-[24px] p-6 text-white relative overflow-hidden shadow-lg shadow-herb-green/20 border border-herb-green/30">
                 <div className="relative z-10 flex items-start justify-between gap-4">
                   <div>
                     <span className="text-[10px] font-extrabold text-white/90 bg-white/20 px-3 py-1.5 rounded-full uppercase tracking-widest border border-white/20 shadow-sm flex items-center gap-1.5 w-fit">
@@ -281,17 +276,28 @@ export default function HomePage() {
                     </div>
 
                     <div className="mt-6 flex items-center gap-3 flex-wrap">
-                      <Link href={`/consult?id=${nextUpcoming.consultationId || nextUpcoming.id}`}>
-                        <button className="px-5 py-2.5 bg-white text-herb-green text-xs font-black rounded-xl hover:bg-white/95 transition-all shadow-md active:scale-95 flex items-center gap-2">
-                          Join Room
-                          <ArrowRight size={14} />
-                        </button>
-                      </Link>
-                      <Link href={`/waiting-room?id=${nextUpcoming.id}`}>
-                        <button className="px-5 py-2.5 bg-white/15 text-white text-xs font-bold rounded-xl hover:bg-white/25 border border-white/20 transition-all active:scale-95 shadow-sm">
-                          Waiting Room
-                        </button>
-                      </Link>
+                      {ENABLE_VIDEO_CONSULTATION ? (
+                        <>
+                          <Link href={`/consult?id=${nextUpcoming.consultationId || nextUpcoming.id}`}>
+                            <button className="px-5 py-2.5 bg-white text-herb-green text-xs font-black rounded-xl hover:bg-white/95 transition-all shadow-md active:scale-95 flex items-center gap-2">
+                              Join Room
+                              <ArrowRight size={14} />
+                            </button>
+                          </Link>
+                          <Link href={`/waiting-room?id=${nextUpcoming.id}`}>
+                            <button className="px-5 py-2.5 bg-white/15 text-white text-xs font-bold rounded-xl hover:bg-white/25 border border-white/20 transition-all active:scale-95 shadow-sm">
+                              Waiting Room
+                            </button>
+                          </Link>
+                        </>
+                      ) : (
+                        <Link href="/appointments">
+                          <button className="px-5 py-2.5 bg-white text-herb-green text-xs font-black rounded-xl hover:bg-white/95 transition-all shadow-md active:scale-95 flex items-center gap-2">
+                            View Details
+                            <ArrowRight size={14} />
+                          </button>
+                        </Link>
+                      )}
                       <Link href="/appointments">
                         <button className="px-5 py-2.5 bg-transparent text-white/90 text-xs font-bold rounded-xl hover:bg-white/10 hover:text-white transition-all active:scale-95">
                           Reschedule
@@ -337,8 +343,6 @@ export default function HomePage() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             {[
               { href: "/discover", icon: "🩺", label: "Book Consult", sub: "6 AYUSH specialties", color: "bg-emerald-500/10 text-emerald-700" },
-              { href: "/ai-chat", icon: "✨", label: "AyurSanvaad AI", sub: "AI Companion", color: "bg-indigo-500/10 text-indigo-700" },
-              { href: "/apothecary", icon: "🏥", label: "Apothecary", sub: "Your medicines", color: "bg-amber-500/10 text-amber-700" },
               { href: "/records", icon: "📁", label: "Health Records", sub: "Timeline & ABHA", color: "bg-sky-500/10 text-sky-700" },
             ].map((item) => (
               <Link key={item.href} href={item.href} className="group block">
@@ -680,41 +684,6 @@ export default function HomePage() {
             </div>
           )}
 
-          {/* AI Card */}
-          <Link href="/ai-chat" className="block group">
-            <div className="bg-white rounded-[2rem] p-6 border border-border/85 hover:border-herb-green/30 hover:shadow-[0_8px_24px_-4px_rgba(27,107,74,0.08)] transition-all duration-300 relative overflow-hidden bg-gradient-to-br from-white to-neutral-50/20">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-herb-green/5 rounded-full blur-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
-
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-2xl bg-herb-green/10 flex items-center justify-center flex-shrink-0 transition-transform duration-300 group-hover:scale-105">
-                  <span className="text-xl">✨</span>
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="text-sm font-bold text-foreground group-hover:text-herb-green transition-colors">AyurSanvaad AI</h3>
-                    <span className="text-[9px] bg-herb-green/10 text-herb-green font-bold px-2 py-0.5 rounded-full uppercase tracking-wider border border-herb-green/15">
-                      AI Companion
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1 leading-relaxed font-medium">
-                    How can I help you balance your wellness routine today? Ask about herbs, remedies, or Prakriti.
-                  </p>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {aiQuestions.map(
-                      (q) => (
-                        <span
-                          key={q}
-                          className="text-[10px] font-semibold border border-border rounded-full px-3 py-1 bg-white text-muted-foreground hover:border-herb-green/40 hover:text-herb-green cursor-pointer transition-colors shadow-sm"
-                        >
-                          {q}
-                        </span>
-                      )
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </Link>
         </div>
 
         {/* Right column */}

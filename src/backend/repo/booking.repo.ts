@@ -177,12 +177,61 @@ async function resolvePatientId(userId: string): Promise<string> {
   return data.id;
 }
 
+/**
+ * Resolve which `patients.id` an appointment should be booked under. When
+ * booking on behalf of a family member, that must be the family member's
+ * own `patients` row (not the account owner's) so the doctor's patient
+ * directory, prescriptions, and EMR all correctly attribute the visit to
+ * them instead of the owner. Ownership of the family member is verified
+ * against the resolved owner patient id to prevent booking against an
+ * arbitrary family_member_id.
+ */
+async function resolveBookingPatientId(ownerPatientId: string, familyMemberId?: string): Promise<string> {
+  if (!familyMemberId) return ownerPatientId;
+
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("family_members")
+    .select("patient_id")
+    .eq("id", familyMemberId)
+    .eq("owner_patient_id", ownerPatientId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (error) {
+    console.error("resolveBookingPatientId error:", error);
+    throw new Error("Unable to resolve family member");
+  }
+
+  if (!data?.patient_id) {
+    throw new Error("Family member is not set up for booking yet");
+  }
+
+  return data.patient_id;
+}
+
 export class BookingRepository {
   static async getAppointments(
     patientIdInput: string,
   ): Promise<AppointmentRow[]> {
     const supabase = createClient();
     const resolvedPatientId = await resolvePatientId(patientIdInput);
+
+    const { data: familyMembers, error: familyMembersError } = await supabase
+      .from("family_members")
+      .select("patient_id")
+      .eq("owner_patient_id", resolvedPatientId)
+      .eq("is_active", true);
+
+    if (familyMembersError) {
+      console.error("getAppointments familyMembers error:", familyMembersError);
+      throw new Error(familyMembersError.message);
+    }
+
+    const visiblePatientIds = [
+      resolvedPatientId,
+      ...(familyMembers ?? []).map((member) => member.patient_id),
+    ];
 
     const { data, error } = await supabase
       .from("appointments")
@@ -212,7 +261,7 @@ export class BookingRepository {
           )
         )
       `)
-      .eq("patient_id", resolvedPatientId)
+      .in("patient_id", visiblePatientIds)
       .order("scheduled_date", { ascending: false })
       .order("scheduled_time", { ascending: false });
 
@@ -319,9 +368,10 @@ export class BookingRepository {
 
   static async bookAppointment(
     params: BookAppointmentInput,
-  ): Promise<void> {
+  ): Promise<{ id: string }> {
     const supabase = createClient();
-    const resolvedPatientId = await resolvePatientId(params.userId);
+    const ownerPatientId = await resolvePatientId(params.userId);
+    const resolvedPatientId = await resolveBookingPatientId(ownerPatientId, params.familyMemberId);
     // Convert display-format time ("4:05 PM") → 24-hour HH:MM ("16:05")
     // The old slice(0,5) was giving "4:05 " which Postgres stored as 04:05 (4 AM)
     const formattedTime = toHHMM(params.time);
@@ -381,7 +431,7 @@ export class BookingRepository {
       }
 
       // Now insert the appointment. If this fails, we must revert the slot status.
-      const { error: appointmentInsertError } = await supabase
+      const { data: insertedAppointment, error: appointmentInsertError } = await supabase
         .from("appointments")
         .insert({
           slot_id: params.slotId,
@@ -393,7 +443,9 @@ export class BookingRepository {
           reason_for_visit: params.reason,
           scheduled_date: params.date,
           scheduled_time: formattedTime,
-        });
+        })
+        .select("id")
+        .single();
 
       if (appointmentInsertError) {
         console.error(
@@ -408,6 +460,8 @@ export class BookingRepository {
 
         throw new Error(appointmentInsertError.message);
       }
+
+      return { id: insertedAppointment.id };
     } finally {
       release();
     }

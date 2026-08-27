@@ -1,6 +1,8 @@
 import { createClient } from "@/shared/db/supabase.server";
 import type { Practitioner } from "@/features/doctor/types/doctor.types";
 import { bookingMutex, toHHMM } from "./booking.repo";
+import { resolveActiveFeeRupees } from "@/lib/fee";
+import { ENABLE_VIDEO_CONSULTATION } from "@/lib/feature-flags";
 
 
 export type DiscoverMetadata = {
@@ -40,11 +42,12 @@ function mapPractitioner(row: any): Practitioner {
     id: row.id,
     name: row.full_name,
     specialty: (row.specializations ?? [])[0] ?? "",
+    specialties: row.specializations ?? [],
     discipline: (row.disciplines ?? [])[0] ?? "Ayurveda",
     experience: row.experience_years ?? 0,
     rating: Number(row.rating_avg ?? 0),
     reviews: row.rating_count ?? 0,
-    fee: Math.round((row.base_video_fee ?? 0) / 100), // paise -> rupees
+    fee: resolveActiveFeeRupees(row.base_video_fee, row.base_clinic_fee), // the fee patients actually see, given the current active consult mode(s)
     hprId: row.hpr_id ?? "",
     isVerified: row.verification_status === "verified" || row.hpr_verified === true,
     avatar: getInitials(row.full_name),
@@ -53,12 +56,18 @@ function mapPractitioner(row: any): Practitioner {
       ? (["video", "clinic"] as ("video" | "clinic")[])
       : (["video"] as ("video" | "clinic")[]),
     nextAvailable: "Tomorrow",
-    location: "",
+    location: [row.city, row.state].filter(Boolean).join(", "),
     qualifications: row.qualifications ?? [],
     about: row.bio ?? "",
     clinicFee: Math.round((row.base_clinic_fee ?? 0) / 100),
+    videoFee: Math.round((row.base_video_fee ?? 0) / 100),
     slotDuration: row.slot_duration_min ?? 20,
     bufferMin: row.buffer_min ?? 5,
+    gender: row.gender ?? "",
+    state: row.state ?? "",
+    city: row.city ?? "",
+    clinicName: row.clinic_hospital_name ?? "",
+    clinicAddress: row.clinic_hospital_address ?? "",
   };
 }
 
@@ -108,13 +117,17 @@ export class DiscoverRepository {
       query = query.or(`full_name.ilike.${s},specializations.cs.{${filters.search}}`);
     }
 
+    // While video consultation is feature-flagged off, in-clinic is the fee patients
+    // actually pay — filter/sort on that column instead of the dormant video fee.
+    const feeColumn = ENABLE_VIDEO_CONSULTATION ? "base_video_fee" : "base_clinic_fee";
+
     if (filters?.videoAvailable) {
-      query = query.gt("base_video_fee", 0);
+      query = query.gt(feeColumn, 0);
     }
 
     if (filters?.under500) {
       // 500 INR in paise is 50000 paise
-      query = query.lt("base_video_fee", 50000);
+      query = query.lt(feeColumn, 50000);
     }
 
     if (filters?.languages && filters.languages.length > 0) {
@@ -144,7 +157,7 @@ export class DiscoverRepository {
     if (filters?.sortBy === "rating") {
       query = query.order("rating_avg", { ascending: false });
     } else if (filters?.sortBy === "fee-low-high") {
-      query = query.order("base_video_fee", { ascending: true });
+      query = query.order(feeColumn, { ascending: true });
     } else if (filters?.sortBy === "experience") {
       query = query.order("experience_years", { ascending: false });
     } else {
@@ -239,8 +252,12 @@ export class DiscoverRepository {
     let filtered = (doctors || []).map((d: any) => ({
       ...d,
       is_active: d.verification_status === "verified",
-      consultation_fee: Math.round((d.base_video_fee ?? 0) / 100),
+      consultation_fee: resolveActiveFeeRupees(d.base_video_fee, d.base_clinic_fee),
       verifications: [{ status: d.verification_status, hpr_id: d.hpr_id }],
+      state: d.state ?? "",
+      city: d.city ?? "",
+      clinic_name: d.clinic_hospital_name ?? "",
+      clinic_address: d.clinic_hospital_address ?? "",
     }));
 
     if (filters?.specialty) {
@@ -293,14 +310,28 @@ export class DiscoverRepository {
       return [];
     }
 
-    const { data: booked } = await supabase
-      .from("appointments")
-      .select("scheduled_time")
-      .eq("doctor_profile_id", doctorId)
-      .eq("scheduled_date", dateStr)
-      .neq("status", "cancelled");
+    // Appointments can be booked through either the legacy flow (sets only
+    // `practitioner_id`) or this newer flow (sets both `doctor_profile_id`
+    // and `practitioner_id`) — check both columns so a slot booked through
+    // either path is correctly hidden here, regardless of which one created it.
+    const [{ data: bookedByProfile }, { data: bookedByPractitioner }] = await Promise.all([
+      supabase
+        .from("appointments")
+        .select("scheduled_time")
+        .eq("doctor_profile_id", doctorId)
+        .eq("scheduled_date", dateStr)
+        .neq("status", "cancelled"),
+      supabase
+        .from("appointments")
+        .select("scheduled_time")
+        .eq("practitioner_id", doctorId)
+        .eq("scheduled_date", dateStr)
+        .neq("status", "cancelled"),
+    ]);
 
-    const bookedTimes = new Set((booked || []).map((b) => b.scheduled_time?.slice(0, 5)));
+    const bookedTimes = new Set(
+      [...(bookedByProfile ?? []), ...(bookedByPractitioner ?? [])].map((b) => b.scheduled_time?.slice(0, 5)),
+    );
 
     // Check upcoming calls in prescriptions
     const { data: upcomingPrescriptions, error: ucErr } = await supabase
@@ -416,7 +447,8 @@ export class DiscoverRepository {
       throw new Error("Patient profile not found. Please complete onboarding first.");
     }
 
-    const resolvedPatientId = await this.resolvePatientIdForBooking(params.userId);
+    const ownerPatientId = await this.resolvePatientIdForBooking(params.userId);
+    const resolvedPatientId = await this.resolveFamilyMemberPatientId(ownerPatientId, params.familyMemberId);
 
     const formattedTime = toHHMM(params.time);
     const lockKey = `${params.doctorProfileId}_${params.date}_${formattedTime}`;
@@ -477,5 +509,33 @@ export class DiscoverRepository {
     const supabase = await createClient();
     const { data } = await supabase.from("patients").select("id").eq("user_id", userId).maybeSingle();
     return data?.id ?? userId;
+  }
+
+  /**
+   * When booking on behalf of a family member, the appointment must be
+   * attributed to their own `patients` row (not the account owner's) so
+   * the doctor's patient directory/prescriptions/EMR find them correctly.
+   * Ownership is verified against the owner's resolved patient id.
+   */
+  private static async resolveFamilyMemberPatientId(ownerPatientId: string, familyMemberId?: string): Promise<string> {
+    if (!familyMemberId) return ownerPatientId;
+
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("family_members")
+      .select("patient_id")
+      .eq("id", familyMemberId)
+      .eq("owner_patient_id", ownerPatientId)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (error) {
+      console.error("[DiscoverRepository] resolveFamilyMemberPatientId error:", error.message);
+      throw new Error("Unable to resolve family member");
+    }
+    if (!data?.patient_id) {
+      throw new Error("Family member is not set up for booking yet");
+    }
+    return data.patient_id;
   }
 }

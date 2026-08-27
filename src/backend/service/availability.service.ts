@@ -9,13 +9,20 @@ import {
   type PractitionerSettingsInput,
 } from "../repo/availability.repo";
 import { AuthUser } from "@/shared/auth/auth.types";
+import { resolveActingPractitionerUserId } from "@/shared/auth/resolve-practitioner-context";
 import { ForbiddenError } from "@/shared/api/api-error";
 
 async function assertPractitioner(authUser: AuthUser): Promise<string> {
-  if (authUser.role !== "doctor" && (authUser.role as string) !== "practitioner") {
+  if (
+    authUser.role !== "doctor" &&
+    (authUser.role as string) !== "practitioner" &&
+    authUser.role !== "assistant"
+  ) {
     throw new ForbiddenError("Only practitioners can manage their availability");
   }
-  const practitionerId = await AvailabilityRepository.getPractitionerIdFromUserId(authUser.id);
+  const practitionerId = await AvailabilityRepository.getPractitionerIdFromUserId(
+    await resolveActingPractitionerUserId(authUser)
+  );
   if (!practitionerId) {
     throw new ForbiddenError("Practitioner profile not found");
   }

@@ -18,6 +18,12 @@ export type PatientProfile = {
   abhaId: string | null;
   abhaAddress: string | null;
   address?: string;
+  avatarUrl?: string | null;
+  linkedDoctorName?: string | null;
+  experience?: number | null;
+  clinicName?: string | null;
+  clinicAddress?: string | null;
+  state?: string | null;
 };
 
 export function usePatientProfile(userId: string | undefined) {

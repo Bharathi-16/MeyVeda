@@ -11,8 +11,10 @@ const NAV = [
   { href: "/admin/practitioners", label: "Practitioners", icon: "🩺" },
   { href: "/admin/hospitals", label: "Hospitals", icon: "🏥" },
   { href: "/admin/patients", label: "Patients", icon: "👥" },
+  { href: "/admin/assistants", label: "Assistants", icon: "🧑‍💼" },
   { href: "/admin/medicines", label: "Medicines", icon: "💊" },
   { href: "/admin/orders", label: "Orders", icon: "📦" },
+  { href: "/admin/audit-logs", label: "Audit Logs", icon: "📜" },
   { href: "/admin/profile", label: "Profile", icon: "👤" },
 ];
 

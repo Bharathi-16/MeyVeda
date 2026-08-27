@@ -70,6 +70,14 @@ export class AdminService {
     await AdminRepository.updateOrderStatus(orderId, status, trackingNumber, logisticsPartner);
   }
 
+  static async getAuditLogs(
+    authUser: AuthUser,
+    filters: { module?: string; actorUserId?: string; search?: string; limit?: number },
+  ) {
+    assertAdmin(authUser);
+    return AdminRepository.getAuditLogs(filters);
+  }
+
   static async getClinics(authUser: AuthUser) {
     assertAdmin(authUser);
     return AdminRepository.getClinics();

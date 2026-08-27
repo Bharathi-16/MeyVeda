@@ -1,3 +1,4 @@
+
 "use client";
 
 import Link from "next/link";
@@ -6,11 +7,47 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import { usePractitionerPrescriptions } from "@/hooks/use-prescriptions";
-import { 
-  FileText, Download, Calendar, User, Search, RefreshCw, 
-  CheckCircle2, Clock, ArrowLeft, Pill, Stethoscope, Activity, 
-  Droplets, Phone, MapPin, FileUp, ChevronRight, X, Check, ChevronDown
+import { InvoiceDialog } from "@/components/consultation-report/InvoiceDialog";
+import {
+  FileText, Download, Calendar, User, Search, RefreshCw,
+  CheckCircle2, Clock, ArrowLeft, Pill, Stethoscope, Activity,
+  Droplets, Phone, MapPin, FileUp, ChevronRight, X, Check, ChevronDown, Users
 } from "lucide-react";
+
+type FamilyMember = {
+  id: string;
+  patientId: string;
+  name: string;
+  relationship: string;
+  age: number;
+  gender: string;
+};
+
+async function getPatientFamily(patientId: string): Promise<FamilyMember[]> {
+  const response = await fetch(`/api/registry/${patientId}/family`, {
+    method: "GET",
+    credentials: "include",
+    cache: "no-store",
+  });
+  const result = await response.json();
+  if (!response.ok || !result.success) {
+    throw new Error(result.error || "Unable to load family members");
+  }
+  return result.data as FamilyMember[];
+}
+
+async function getDependentPatientIds(): Promise<Set<string>> {
+  const response = await fetch("/api/registry", {
+    method: "GET",
+    credentials: "include",
+    cache: "no-store",
+  });
+  const result = await response.json();
+  if (!response.ok || !result.success) return new Set();
+  return new Set(
+    (result.data as any[]).filter((p) => p.isFamilyMember).map((p) => p.id),
+  );
+}
 
 function PrescriptionsContent() {
   const { user } = useAuth();
@@ -30,17 +67,25 @@ function PrescriptionsContent() {
   const [customDate, setCustomDate] = useState<string | null>(null);
   const [openDateDropdown, setOpenDateDropdown] = useState(false);
 
+  const [dependentPatientIds, setDependentPatientIds] = useState<Set<string>>(new Set());
+  const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
+  const [viewedFamilyMember, setViewedFamilyMember] = useState<FamilyMember | null>(null);
+
+  useEffect(() => {
+    getDependentPatientIds().then(setDependentPatientIds).catch(() => setDependentPatientIds(new Set()));
+  }, [user?.id]);
+
   const isWithinDateFilter = useCallback((recordDateStr: string) => {
     if (dateFilterType === "all") return true;
     if (!recordDateStr) return false;
-    
+
     const recordDate = new Date(recordDateStr);
     if (isNaN(recordDate.getTime())) return true;
-    
+
     const now = new Date();
     const recordStart = new Date(recordDate.getFullYear(), recordDate.getMonth(), recordDate.getDate()).getTime();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    
+
     switch (dateFilterType) {
       case "today":
         return recordStart === todayStart;
@@ -100,26 +145,75 @@ function PrescriptionsContent() {
     };
   });
 
+  // Account owners only — dependents (family members) are shown within
+  // their owner's "Family Members" card instead of the top-level directory.
+  const ownerPatients = uniquePatients.filter(p => !dependentPatientIds.has(p.id));
+
   // Filter patient list based on search
-  const filteredPatients = uniquePatients.filter(p => 
-    p.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+  const filteredPatients = ownerPatients.filter(p =>
+    p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     p.phone.includes(searchQuery)
   );
 
-  // Get active selected patient details
-  const activePatient = uniquePatients.find(p => p.id === selectedPatientId);
+  // Get active selected patient details — falls back to a placeholder for a
+  // family member who has no prescriptions of their own yet (so they never
+  // appear in `uniquePatients`, which is built purely from prescription rows).
+  const activePatient =
+    uniquePatients.find(p => p.id === selectedPatientId) ||
+    (viewedFamilyMember?.patientId === selectedPatientId
+      ? {
+          id: viewedFamilyMember.patientId,
+          name: viewedFamilyMember.name,
+          initials: viewedFamilyMember.name[0]?.toUpperCase() || "P",
+          gender: viewedFamilyMember.gender,
+          age: viewedFamilyMember.age,
+          phone: "—",
+          consultationsCount: 0,
+          list: [] as any[],
+        }
+      : undefined);
   const activeRx = rxs.find(r => r.id === selectedRxId);
 
   useEffect(() => {
-    if (uniquePatients.length > 0) {
-      const exists = uniquePatients.some(p => p.id === selectedPatientId);
+    if (ownerPatients.length > 0) {
+      const exists =
+        uniquePatients.some(p => p.id === selectedPatientId) ||
+        viewedFamilyMember?.patientId === selectedPatientId;
       if (!exists) {
-        setSelectedPatientId(uniquePatients[0].id);
+        setSelectedPatientId(ownerPatients[0].id);
       }
     } else {
       setSelectedPatientId(null);
     }
-  }, [uniquePatients, selectedPatientId]);
+  }, [ownerPatients, uniquePatients, selectedPatientId, viewedFamilyMember]);
+
+  // Load the selected account owner's family members.
+  useEffect(() => {
+    if (!activePatient || dependentPatientIds.has(activePatient.id)) {
+      setFamilyMembers([]);
+      return;
+    }
+    let cancelled = false;
+    getPatientFamily(activePatient.id)
+      .then((data) => {
+        if (!cancelled) setFamilyMembers(data);
+      })
+      .catch((err) => {
+        console.error("Fetch family members error:", err);
+        if (!cancelled) setFamilyMembers([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activePatient?.id, dependentPatientIds]);
+
+  function handleSelectFamilyMember(fm: FamilyMember) {
+    const existing = uniquePatients.find(p => p.id === fm.patientId);
+    setViewedFamilyMember(existing ? null : fm);
+    setSelectedPatientId(fm.patientId);
+    setSelectedRxId(null);
+    setIsExpanded(false);
+  }
 
   return (
     <div className="h-[100dvh] overflow-hidden bg-slate-50/50 flex">
@@ -128,7 +222,7 @@ function PrescriptionsContent() {
         <div className="p-6 border-b border-slate-100">
           <h1 className="text-xl font-bold text-slate-900 tracking-tight">Patient Directory</h1>
           <p className="text-xs text-slate-500 mt-1">Select a patient to view consultation histories</p>
-          
+
           <div className="flex items-center gap-2 mt-4">
             <div className="relative flex-1">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -254,19 +348,20 @@ function PrescriptionsContent() {
                     setSelectedPatientId(p.id);
                     setSelectedRxId(null); // Clear selected consultation details on patient change
                     setIsExpanded(false); // Reset expanded state
+                    setViewedFamilyMember(null);
                   }}
                   className={cn(
                     "p-4 rounded-xl cursor-pointer transition-all flex items-start justify-between group",
-                    isSelected 
-                      ? "bg-indigo-50/70 border border-indigo-100/50 shadow-sm" 
+                    isSelected
+                      ? "bg-indigo-50/70 border border-indigo-100/50 shadow-sm"
                       : "hover:bg-slate-50 border border-transparent"
                   )}
                 >
                   <div className="flex items-center gap-3">
                     <div className={cn(
                       "w-11 h-11 rounded-xl flex items-center justify-center font-bold text-sm shadow-sm transition-colors",
-                      isSelected 
-                        ? "bg-indigo-600 text-white" 
+                      isSelected
+                        ? "bg-indigo-600 text-white"
                         : "bg-slate-100 text-slate-700 group-hover:bg-indigo-50 group-hover:text-indigo-600"
                     )}>
                       {p.initials}
@@ -279,8 +374,8 @@ function PrescriptionsContent() {
                   </div>
                   <span className={cn(
                     "text-[10px] font-bold px-2 py-1 rounded-md border tracking-wide uppercase shadow-sm flex items-center gap-1",
-                    isSelected 
-                      ? "bg-indigo-100 text-indigo-800 border-indigo-200" 
+                    isSelected
+                      ? "bg-indigo-100 text-indigo-800 border-indigo-200"
                       : "bg-slate-50 text-slate-500 border-slate-200"
                   )}>
                     {p.consultationsCount} Records
@@ -320,58 +415,98 @@ function PrescriptionsContent() {
               </Link>
             </div>
 
+            {familyMembers.length > 0 && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm mb-6">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 mb-4">
+                  <Users className="w-4 h-4 text-indigo-500" />
+                  Family Members
+                </h3>
+                <div className="space-y-2">
+                  {familyMembers.map((fm) => (
+                    <div
+                      key={fm.id}
+                      onClick={() => handleSelectFamilyMember(fm)}
+                      className="flex items-center gap-3 p-3 rounded-xl border border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors"
+                    >
+                      <div className="w-9 h-9 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center font-bold text-sm flex-shrink-0">
+                        {fm.name[0]?.toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="font-semibold text-sm text-slate-800 truncate">{fm.name}</p>
+                          <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full capitalize">
+                            {fm.relationship}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400 font-medium mt-0.5">{fm.age} y • {fm.gender}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {activePatient?.list.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center shadow-sm">
+                <FileText className="w-8 h-8 text-slate-300 mx-auto mb-3" />
+                <p className="text-sm font-semibold text-slate-700">No prescriptions yet</p>
+                <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+                  {activePatient.name} has no recorded consultations with you.
+                </p>
+              </div>
+            ) : (
             <div className="space-y-6 relative before:absolute before:left-[17px] before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200">
               {[...(activePatient?.list || [])]
                 .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
                 .slice(0, isExpanded ? undefined : 5)
                 .map((rx, idx) => (
-                <div 
-                  key={rx.id} 
-                  className={cn(
-                    "relative pl-10 flex items-start gap-4 group",
-                    !isExpanded || idx < 5 ? "" : "animate-in fade-in slide-in-from-top-4 duration-300"
-                  )}
-                >
-                  {/* Timeline Dot Icon */}
-                  <div className="absolute left-0.5 top-1.5 w-8 h-8 rounded-full border border-slate-200 bg-white flex items-center justify-center shadow-sm group-hover:border-indigo-400 group-hover:shadow transition-all">
-                    <Calendar className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-600 transition-colors" />
-                  </div>
-
-                  {/* Record Card */}
-                  <div 
-                    onClick={() => setSelectedRxId(rx.id)}
-                    className="flex-1 bg-white border border-slate-200 hover:border-slate-300 rounded-2xl p-6 shadow-sm hover:shadow-md transition-all cursor-pointer flex items-center justify-between gap-6"
+                  <div
+                    key={rx.id}
+                    className={cn(
+                      "relative pl-10 flex items-start gap-4 group",
+                      !isExpanded || idx < 5 ? "" : "animate-in fade-in slide-in-from-top-4 duration-300"
+                    )}
                   >
-                    <div className="space-y-2.5">
-                      <div className="flex items-center gap-3">
-                        <span className="font-semibold text-base text-slate-900">{rx.date}</span>
-                        <span className="text-xs font-semibold px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-md border border-emerald-100 uppercase tracking-wide">
-                          Completed
-                        </span>
-                      </div>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-y-1.5 gap-x-6 text-sm text-slate-600 font-medium">
-                        <div className="flex items-center gap-1.5">
-                          <FileText className="w-4 h-4 text-slate-400" />
-                          <span>Diagnosis: <span className="text-slate-800">{rx._raw?.diagnosis || rx.chiefComplaint || "Routine Check-up"}</span></span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <Pill className="w-4 h-4 text-slate-400" />
-                          <span>{rx.items?.length || 0} Prescribed Formulations</span>
-                        </div>
-                      </div>
+                    {/* Timeline Dot Icon */}
+                    <div className="absolute left-0.5 top-1.5 w-8 h-8 rounded-full border border-slate-200 bg-white flex items-center justify-center shadow-sm group-hover:border-indigo-400 group-hover:shadow transition-all">
+                      <Calendar className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-600 transition-colors" />
                     </div>
 
-                    <div className="flex items-center gap-3">
-                      <button className="flex items-center gap-1 py-2.5 px-4 bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-300 text-slate-700 text-sm font-semibold rounded-xl transition-all shadow-sm">
-                        <span>Open Report</span>
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
+                    {/* Record Card */}
+                    <div
+                      onClick={() => setSelectedRxId(rx.id)}
+                      className="flex-1 bg-white border border-slate-200 hover:border-slate-300 rounded-2xl p-6 shadow-sm hover:shadow-md transition-all cursor-pointer flex items-center justify-between gap-6"
+                    >
+                      <div className="space-y-2.5">
+                        <div className="flex items-center gap-3">
+                          <span className="font-semibold text-base text-slate-900">{rx.date}</span>
+                          <span className="text-xs font-semibold px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-md border border-emerald-100 uppercase tracking-wide">
+                            Completed
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-y-1.5 gap-x-6 text-sm text-slate-600 font-medium">
+                          <div className="flex items-center gap-1.5">
+                            <FileText className="w-4 h-4 text-slate-400" />
+                            <span>Diagnosis: <span className="text-slate-800">{rx._raw?.diagnosis || rx.chiefComplaint || "Routine Check-up"}</span></span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <Pill className="w-4 h-4 text-slate-400" />
+                            <span>{rx.items?.length || 0} Prescribed Formulations</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <button className="flex items-center gap-1 py-2.5 px-4 bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-300 text-slate-700 text-sm font-semibold rounded-xl transition-all shadow-sm">
+                          <span>Open Report</span>
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-              
+                ))}
+
               {/* View More / View Less Navigation */}
               {activePatient?.list && activePatient.list.length > 5 && (
                 <div className="pt-4 pl-10 flex justify-start">
@@ -393,6 +528,7 @@ function PrescriptionsContent() {
                 </div>
               )}
             </div>
+            )}
           </div>
         ) : (
           /* Detailed Report View of Selected Consultation */
@@ -400,7 +536,7 @@ function PrescriptionsContent() {
             {/* Header / Actions */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 border-b border-slate-200 pb-6">
               <div>
-                <button 
+                <button
                   onClick={() => setSelectedRxId(null)}
                   className="inline-flex items-center text-sm font-semibold text-slate-500 hover:text-indigo-600 transition-colors mb-3"
                 >
@@ -417,6 +553,12 @@ function PrescriptionsContent() {
               </div>
 
               <div className="flex items-center gap-3">
+                <InvoiceDialog
+                  consultationId={activeRx?.consultationId}
+                  patientName={activePatient?.name || "N/A"}
+                  doctorName={user?.name || "N/A"}
+                  invoiceDate={activeRx?.date}
+                />
                 <Link href={`/api/consultations/${activeRx?.consultationId}/pdf`} target="_blank">
                   <button className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-xl shadow-md shadow-indigo-600/10 transition-all">
                     <Download className="w-4 h-4" />
@@ -587,9 +729,9 @@ function PrescriptionsContent() {
                             <td className="p-4 font-semibold text-slate-900">{item.name}</td>
                             <td className="p-4 text-slate-700">{item.form} ({item.dose || "—"})</td>
                             <td className="p-4 text-slate-700">
-                               <div className="font-semibold text-slate-900">{item.frequency || "—"}</div>
-                               {item.timing && <div className="text-xs text-slate-400 mt-0.5">Timing: {item.timing}</div>}
-                               {item.anupana && <div className="text-xs text-slate-400 mt-0.5">Vehicle: {item.anupana}</div>}
+                              <div className="font-semibold text-slate-900">{item.frequency || "—"}</div>
+                              {item.timing && <div className="text-xs text-slate-400 mt-0.5">Timing: {item.timing}</div>}
+                              {item.anupana && <div className="text-xs text-slate-400 mt-0.5">Vehicle: {item.anupana}</div>}
                             </td>
                             <td className="p-4 text-slate-700">{item.durationDays ? `${item.durationDays} Days` : "—"}</td>
                             <td className="p-4 text-slate-500 italic">{item.instructions || "—"}</td>
@@ -610,10 +752,10 @@ function PrescriptionsContent() {
                   Dietary & Lifestyle Advice
                 </h2>
                 {activeRx?.dietaryAdvice ? (
-                  <div 
+                  <div
                     className="prose prose-sm max-w-none text-slate-700 bg-amber-50/20 p-5 rounded-xl border border-amber-100/50
                       [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:mb-1 [&_p]:mb-3 last:[&_p]:mb-0 text-sm leading-relaxed"
-                    dangerouslySetInnerHTML={{ __html: activeRx.dietaryAdvice }} 
+                    dangerouslySetInnerHTML={{ __html: activeRx.dietaryAdvice }}
                   />
                 ) : (
                   <p className="text-sm text-slate-400 italic">No dietary or lifestyle advice recorded.</p>
@@ -634,10 +776,10 @@ function PrescriptionsContent() {
                           <FileText className="w-4.5 h-4.5 text-indigo-500 flex-shrink-0" />
                           <span className="text-xs text-slate-700 font-semibold truncate" title={file.file_name}>{file.file_name}</span>
                         </div>
-                        <a 
-                          href={file.file_url} 
-                          target="_blank" 
-                          rel="noopener noreferrer" 
+                        <a
+                          href={file.file_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
                           className="text-xs font-bold text-indigo-600 hover:text-indigo-800 ml-3 flex-shrink-0 transition-colors"
                         >
                           View File
@@ -660,7 +802,7 @@ function PrescriptionsContent() {
                     {activeRx?.lifestyleAdvice?.replace(/\[Upcoming Session Fixed: .*?\]/g, '').trim() || "No specific follow-up instructions provided."}
                   </p>
                 </div>
-                
+
                 {activeRx?.lifestyleAdvice?.match(/\[Upcoming Session Fixed: (.*?)\]/) && (
                   <div className="bg-[#f0fdf4] border border-[#bbf7d0] rounded-xl p-4 flex items-center justify-between">
                     <div>
@@ -680,12 +822,12 @@ function PrescriptionsContent() {
                                 const h12 = hours % 12 || 12;
                                 displayTime = `${h12}:${m} ${period}`;
                               }
-                            } catch (e) {}
+                            } catch (e) { }
 
                             let displayDate = date;
                             try {
                               displayDate = new Date(date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-                            } catch (e) {}
+                            } catch (e) { }
 
                             return `${displayDate} at ${displayTime}`;
                           }

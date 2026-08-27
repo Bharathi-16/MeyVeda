@@ -3,11 +3,25 @@ import "server-only";
 import { OnboardingRepository, type SaveDoctorProfileInput, type SavePatientProfileInput } from "../repo/onboarding.repo";
 import { AuthUser } from "@/shared/auth/auth.types";
 import { ForbiddenError } from "@/shared/api/api-error";
+import { resolveActiveFeeRupees } from "@/lib/fee";
 
 function assertAdmin(authUser: AuthUser): void {
   if (authUser.role !== "admin" && authUser.role !== "super_admin") {
     throw new ForbiddenError("Admin access required");
   }
+}
+
+function getMissingRequiredProfileFields(doctor: any): string[] {
+  const missing: string[] = [];
+  if (!doctor) return ["profile"];
+  if (!doctor.full_name?.trim()) missing.push("full name");
+  if (!doctor.user?.mobile) missing.push("phone number");
+  if (!(doctor.qualifications?.length > 0)) missing.push("qualifications");
+  if (!(doctor.specializations?.length > 0)) missing.push("specialty");
+  if (!(doctor.languages?.length > 0)) missing.push("languages");
+  if (!(resolveActiveFeeRupees(doctor.base_video_fee, doctor.base_clinic_fee) > 0)) missing.push("consultation fee");
+  if (!doctor.degree_url || !doctor.registration_cert_url) missing.push("verification documents");
+  return missing;
 }
 
 export class OnboardingService {
@@ -17,8 +31,6 @@ export class OnboardingService {
 
   static async saveDoctorProfile(input: SaveDoctorProfileInput): Promise<string> {
     if (!input.fullName?.trim()) throw new Error("Full name is required");
-    if (!input.degreeUrl) throw new Error("Degree document is required");
-    if (!input.registrationCertUrl) throw new Error("Registration certificate is required");
     return OnboardingRepository.saveDoctorProfileAndVerification(input);
   }
 
@@ -47,6 +59,15 @@ export class OnboardingService {
     assertAdmin(authUser);
     if (!verificationId || !doctorId) throw new Error("Verification ID and doctor ID are required");
     if (status === "rejected" && !reason?.trim()) throw new Error("A rejection reason is required");
+
+    if (status === "verified") {
+      const doctor = await OnboardingRepository.getDoctorRowForVerification(doctorId);
+      const missing = getMissingRequiredProfileFields(doctor);
+      if (missing.length > 0) {
+        throw new Error(`Cannot approve: profile is incomplete (missing: ${missing.join(", ")})`);
+      }
+    }
+
     await OnboardingRepository.verifyDoctor(verificationId, doctorId, status, authUser.id, reason);
   }
 }
