@@ -20,12 +20,14 @@ import {
   IndianRupee,
   FileCheck2,
   IdCard,
+  Building2,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { AYUSH_QUALIFICATIONS, AYUSH_SPECIALTIES, LANGUAGES } from "@/features/doctor/constants/doctor.constants";
+import { useIndiaStates, useIndiaCities } from "@/hooks/use-location";
 
 const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 const MAX_EMERGENCY_CONTACTS = 3;
@@ -51,6 +53,17 @@ export default function CreateProfilePage() {
   const [gender, setGender] = useState("");
   const [bloodGroup, setBloodGroup] = useState("");
 
+  // Practitioner practice location
+  const [state, setState] = useState("");
+  const [city, setCity] = useState("");
+  const [clinicName, setClinicName] = useState("");
+  const [clinicAddress, setClinicAddress] = useState("");
+
+  const { data: statesData, loading: statesLoading } = useIndiaStates();
+  const { data: citiesData, loading: citiesLoading } = useIndiaCities(state);
+  const states = statesData ?? [];
+  const cities = citiesData ?? [];
+
   // Patient-only fields
   const [address, setAddress] = useState("");
   const [ayushNumber, setAyushNumber] = useState("");
@@ -62,8 +75,9 @@ export default function CreateProfilePage() {
   // Doctor-only fields
   const [hprId, setHprId] = useState("");
   const [consultationFee, setConsultationFee] = useState("");
+  const [experience, setExperience] = useState("");
   const [selectedQuals, setSelectedQuals] = useState<string[]>([]);
-  const [selectedSpecialty, setSelectedSpecialty] = useState("");
+  const [selectedSpecialties, setSelectedSpecialties] = useState<string[]>([]);
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
   const [verificationStatus, setVerificationStatus] = useState("");
   const [degreeUrl, setDegreeUrl] = useState("");
@@ -91,7 +105,7 @@ export default function CreateProfilePage() {
           setBloodGroup(data.bloodGroup || "");
           setLinkedDoctorName(data.linkedDoctorName || "");
         })
-        .catch(() => {})
+        .catch(() => { })
         .finally(() => setLoading(false));
       return;
     }
@@ -114,12 +128,17 @@ export default function CreateProfilePage() {
         if (isPractitioner) {
           setHprId(data.hpr_id || "");
           setConsultationFee(data.consultation_fee ? String(data.consultation_fee) : "");
+          setExperience(data.experience_years ? String(data.experience_years) : "");
           setSelectedQuals(data.qualifications || []);
-          setSelectedSpecialty((data.specializations && data.specializations[0]) || "");
+          setSelectedSpecialties(data.specializations || []);
           setSelectedLanguages(data.languages || []);
           setVerificationStatus(data.verification_status || "");
           setDegreeUrl(data.degree_url || "");
           setRegistrationCertUrl(data.registration_cert_url || "");
+          setState(data.state || "");
+          setCity(data.city || "");
+          setClinicName(data.clinic_hospital_name || "");
+          setClinicAddress(data.clinic_hospital_address || "");
         } else {
           setAddress(data.address || "");
           setAyushNumber(data.ayush_number || "");
@@ -185,9 +204,13 @@ export default function CreateProfilePage() {
     isPractitioner &&
     (!dob ||
       !gender ||
+      !state ||
+      !city ||
+      !clinicName.trim() ||
+      !clinicAddress.trim() ||
       !consultationFee ||
       selectedQuals.length === 0 ||
-      !selectedSpecialty ||
+      selectedSpecialties.length === 0 ||
       selectedLanguages.length === 0 ||
       !(degreeFile || degreeUrl) ||
       !(regCertFile || registrationCertUrl));
@@ -224,10 +247,15 @@ export default function CreateProfilePage() {
             fullName: user.name,
             dateOfBirth: dob || undefined,
             gender: gender || undefined,
+            state: state || undefined,
+            city: city || undefined,
+            clinicName: clinicName.trim() || undefined,
+            clinicAddress: clinicAddress.trim() || undefined,
             hprId: hprId || undefined,
             consultationFee: consultationFee ? parseFloat(consultationFee) : undefined,
+            experienceYears: experience ? parseInt(experience, 10) : undefined,
             qualifications: selectedQuals,
-            specializations: selectedSpecialty ? [selectedSpecialty] : [],
+            specializations: selectedSpecialties,
             languages: selectedLanguages,
             degreeUrl: uploaded.degreeUrl || degreeUrl || undefined,
             registrationCertUrl: uploaded.registrationCertUrl || registrationCertUrl || undefined,
@@ -376,6 +404,91 @@ export default function CreateProfilePage() {
                 {showValidation && !gender && <p className="text-xs text-red-500 mt-1.5">Gender is required</p>}
               </div>
             </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1.5">
+                  State <span className="text-red-500">*</span>
+                </label>
+                <SearchableSelect
+                  options={states}
+                  value={state ? [state] : []}
+                  onChange={(next) => {
+                    setState(next[0] || "");
+                    setCity(""); // city list depends on state — drop a now-invalid choice
+                  }}
+                  icon={MapPin}
+                  placeholder={statesLoading ? "Loading states…" : states.length === 0 ? "States unavailable — retry shortly" : "Search states…"}
+                  disabled={statesLoading || states.length === 0}
+                  hasError={showValidation && !state}
+                  emptyMessage="No matching states."
+                />
+                {showValidation && !state && <p className="text-xs text-red-500 mt-1.5">State is required</p>}
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1.5">
+                  City <span className="text-red-500">*</span>
+                </label>
+                <SearchableSelect
+                  options={cities}
+                  value={city ? [city] : []}
+                  onChange={(next) => setCity(next[0] || "")}
+                  icon={Building2}
+                  placeholder={
+                    !state
+                      ? "Select state first"
+                      : citiesLoading
+                        ? "Loading cities…"
+                        : cities.length === 0
+                          ? "No cities found for this state"
+                          : "Search cities…"
+                  }
+                  disabled={!state || citiesLoading || cities.length === 0}
+                  hasError={showValidation && !city}
+                  emptyMessage="No matching cities."
+                />
+                {showValidation && !city && <p className="text-xs text-red-500 mt-1.5">City is required</p>}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1.5">
+                  Clinic / Hospital Name <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <Building2 size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-indigo-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={clinicName}
+                    onChange={(e) => setClinicName(e.target.value)}
+                    placeholder="e.g. MeyVeda Wellness Center"
+                    className={premiumField(showValidation && !clinicName.trim())}
+                  />
+                </div>
+                {showValidation && !clinicName.trim() && (
+                  <p className="text-xs text-red-500 mt-1.5">Clinic / hospital name is required</p>
+                )}
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1.5">
+                  Clinic / Hospital Address <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <MapPin size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-indigo-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={clinicAddress}
+                    onChange={(e) => setClinicAddress(e.target.value)}
+                    placeholder="Street, area, landmark"
+                    className={premiumField(showValidation && !clinicAddress.trim())}
+                  />
+                </div>
+                {showValidation && !clinicAddress.trim() && (
+                  <p className="text-xs text-red-500 mt-1.5">Clinic / hospital address is required</p>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* ── Professional Details ── */}
@@ -390,7 +503,7 @@ export default function CreateProfilePage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <div>
                 <label className="text-xs font-semibold text-slate-700 block mb-1.5">HPR ID (optional)</label>
                 <div className="relative">
@@ -422,6 +535,20 @@ export default function CreateProfilePage() {
                 {showValidation && !consultationFee && (
                   <p className="text-xs text-red-500 mt-1.5">Consultation fee is required</p>
                 )}
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1.5">Experience (in years)</label>
+                <div className="relative">
+                  <GraduationCap size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-indigo-400 pointer-events-none" />
+                  <input
+                    type="number"
+                    min="0"
+                    value={experience}
+                    onChange={(e) => setExperience(e.target.value)}
+                    placeholder="e.g. 5"
+                    className={premiumField(false)}
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -461,13 +588,14 @@ export default function CreateProfilePage() {
                 </label>
                 <SearchableSelect
                   options={AYUSH_SPECIALTIES}
-                  value={selectedSpecialty ? [selectedSpecialty] : []}
-                  onChange={(next) => setSelectedSpecialty(next[0] || "")}
-                  placeholder="Select specialty…"
-                  hasError={showValidation && !selectedSpecialty}
+                  value={selectedSpecialties}
+                  onChange={setSelectedSpecialties}
+                  multi
+                  placeholder="Select specialties…"
+                  hasError={showValidation && selectedSpecialties.length === 0}
                 />
-                {showValidation && !selectedSpecialty && (
-                  <p className="text-xs text-red-500 mt-1.5">Specialty is required</p>
+                {showValidation && selectedSpecialties.length === 0 && (
+                  <p className="text-xs text-red-500 mt-1.5">Select at least one specialty</p>
                 )}
               </div>
               <div>

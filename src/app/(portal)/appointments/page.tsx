@@ -1,3 +1,5 @@
+
+
 "use client";
 
 import Link from "next/link";
@@ -101,6 +103,7 @@ export default function AppointmentsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [processingCancelId, setProcessingCancelId] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDoctorName, setSelectedDoctorName] = useState<string | null>(null);
@@ -183,13 +186,23 @@ export default function AppointmentsPage() {
   const displayList = sortedDoctorTabList.slice(0, isExpanded ? undefined : 5);
 
   async function handleCancel(id: string) {
+    if (processingCancelId) return;
+    setProcessingCancelId(id);
     try {
       await cancelAppointment(id, "Cancelled by patient");
       setCancellingId(null);
-      await loadAppointments();
+      alert("Appointment cancelled successfully");
+      try {
+        await loadAppointments();
+      } catch (err) {
+        // The cancellation itself succeeded; only the list refresh failed.
+        console.error("Failed to refresh appointments after cancellation:", err);
+      }
     } catch (err) {
       console.error(err);
-      alert("Failed to cancel appointment");
+      alert(err instanceof Error ? err.message : "Failed to cancel appointment");
+    } finally {
+      setProcessingCancelId(null);
     }
   }
 
@@ -311,15 +324,17 @@ export default function AppointmentsPage() {
               <div className="flex gap-2 mt-3 max-w-xs">
                 <button
                   onClick={() => setCancellingId(null)}
-                  className="flex-1 py-2 bg-white hover:bg-neutral-50 border border-neutral-200 text-neutral-600 rounded-full text-xs font-bold transition-all cursor-pointer"
+                  disabled={processingCancelId === appt.id}
+                  className="flex-1 py-2 bg-white hover:bg-neutral-50 border border-neutral-200 text-neutral-600 rounded-full text-xs font-bold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Keep
                 </button>
                 <button
                   onClick={() => handleCancel(appt.id)}
-                  className="flex-1 py-2 bg-red-500 hover:bg-red-600 text-white rounded-full text-xs font-bold transition-all active:scale-95 cursor-pointer"
+                  disabled={processingCancelId === appt.id}
+                  className="flex-1 py-2 bg-red-500 hover:bg-red-600 text-white rounded-full text-xs font-bold transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Confirm Cancel
+                  {processingCancelId === appt.id ? "Cancelling…" : "Confirm Cancel"}
                 </button>
               </div>
             </div>
@@ -582,4 +597,6 @@ export default function AppointmentsPage() {
       )}
     </div>
   );
-}
+} 
+
+

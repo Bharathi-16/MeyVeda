@@ -1,3 +1,4 @@
+
 import { createClient } from "@/shared/db/supabase.server";
 import { resolveActiveFeeRupees } from "@/lib/fee";
 
@@ -17,6 +18,11 @@ export type SaveDoctorProfileInput = {
   dateOfBirth?: string;
   gender?: string;
   bloodGroup?: string;
+  state?: string;
+  city?: string;
+  clinicName?: string;
+  clinicAddress?: string;
+  experienceYears?: number;
 };
 
 export type EmergencyContact = { name: string; phone: string };
@@ -109,6 +115,11 @@ export class OnboardingRepository {
       hpr_id: p.hprId || null,
       date_of_birth: p.dateOfBirth || null,
       gender: p.gender || null,
+      state: p.state || null,
+      city: p.city || null,
+      clinic_hospital_name: p.clinicName || null,
+      clinic_hospital_address: p.clinicAddress || null,
+      experience_years: p.experienceYears ?? null,
       specializations: p.specializations || [],
       disciplines: ["Ayurveda"],
       languages: p.languages || [],

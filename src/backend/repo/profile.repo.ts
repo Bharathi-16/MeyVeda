@@ -19,6 +19,10 @@ export type ProfileEntity = {
   address?: string;
   avatarUrl?: string | null;
   linkedDoctorName?: string | null;
+  experience?: number | null;
+  clinicName?: string | null;
+  clinicAddress?: string | null;
+  state?: string | null;
 };
 
 export type UpdateProfileFields = {
@@ -32,6 +36,10 @@ export type UpdateProfileFields = {
   phone?: string;
   prakriti?: string;
   avatarUrl?: string;
+  state?: string;
+  clinicName?: string;
+  clinicAddress?: string;
+  experienceYears?: number;
 };
 
 function normalizeRole(role?: string): string {
@@ -199,6 +207,11 @@ export class ProfileRepository {
         date_of_birth,
         gender,
         blood_group,
+        state,
+        city,
+        clinic_hospital_name,
+        clinic_hospital_address,
+        experience_years,
         user:users (
           id,
           mobile,
@@ -241,13 +254,17 @@ export class ProfileRepository {
       age: calculateAge(practitioner.date_of_birth),
       gender: practitioner.gender ?? "",
       bloodGroup: practitioner.blood_group ?? "",
-      city: "",
+      city: practitioner.city ?? "",
       pinCode: "",
       prakriti: "Unknown",
       wellnessGoals: [],
       abhaId: null,
       abhaAddress: null,
       address: "",
+      state: practitioner.state ?? "",
+      clinicName: practitioner.clinic_hospital_name ?? "",
+      clinicAddress: practitioner.clinic_hospital_address ?? "",
+      experience: practitioner.experience_years ?? null,
     };
   }
 
@@ -428,6 +445,26 @@ export class ProfileRepository {
 
         if (updates.prakriti !== undefined) {
           tableUpdates.prakriti = updates.prakriti || null;
+        }
+      } else {
+        if (updates.state !== undefined) {
+          tableUpdates.state = updates.state || null;
+        }
+
+        if (updates.city !== undefined) {
+          tableUpdates.city = updates.city || null;
+        }
+
+        if (updates.clinicName !== undefined) {
+          tableUpdates.clinic_hospital_name = updates.clinicName || null;
+        }
+
+        if (updates.clinicAddress !== undefined) {
+          tableUpdates.clinic_hospital_address = updates.clinicAddress || null;
+        }
+
+        if (updates.experienceYears !== undefined) {
+          tableUpdates.experience_years = updates.experienceYears;
         }
       }
 
