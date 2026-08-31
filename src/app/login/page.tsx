@@ -435,7 +435,7 @@ export default function LoginPage() {
 
       if (!dbUser?.id) {
         throw new Error(
-          "Login succeeded, but user information was not returned."
+          "User Not Found! Create the account by clicking on create account button"
         );
       }
 
