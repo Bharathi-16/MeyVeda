@@ -6,6 +6,8 @@ import { createClient } from "@/shared/db/supabase.server";
 import { signAccessToken, signRefreshToken } from "@/lib/jwt";
 import { successResponse, errorResponse } from "@/lib/utils/response";
 import { cookies } from "next/headers";
+import { checkRateLimit } from "@/shared/security/rate-limit";
+import { getRequestIp } from "@/shared/security/request-meta";
 
 /**
  * GET /api/auth/check-account?email=
@@ -37,6 +39,24 @@ export async function sendOtp(req: NextRequest) {
 
   if (!email) {
     return errorResponse("Email is required", 400);
+  }
+
+  const ip = getRequestIp(req);
+  const normalizedEmail = String(email).toLowerCase();
+
+  // Cap both per-IP and per-email OTP sends so an attacker can't spam
+  // deliveries (cost/spam abuse) or churn through fresh OTPs to widen a
+  // brute-force window on /api/auth/login.
+  const ipLimit = checkRateLimit(`otp:send:ip:${ip}`, 10, 60 * 60);
+  const emailLimit = checkRateLimit(`otp:send:email:${normalizedEmail}`, 5, 15 * 60);
+
+  if (!ipLimit.allowed || !emailLimit.allowed) {
+    const retryAfterSeconds = Math.max(ipLimit.retryAfterSeconds, emailLimit.retryAfterSeconds);
+    console.warn(`[sendOtp] Rate limit exceeded for ip=${ip} email=${normalizedEmail}`);
+    return errorResponse(
+      `Too many OTP requests. Please try again in ${retryAfterSeconds} seconds.`,
+      429,
+    );
   }
 
   // Cast to any — database types are not yet generated
@@ -112,6 +132,17 @@ export async function login(req: NextRequest) {
 
   if (!email || !otp) {
     return errorResponse("Email and OTP are required", 400);
+  }
+
+  const ip = getRequestIp(req);
+  const ipLimit = checkRateLimit(`otp:verify:ip:${ip}`, 30, 15 * 60);
+
+  if (!ipLimit.allowed) {
+    console.warn(`[login] Rate limit exceeded for ip=${ip}`);
+    return errorResponse(
+      `Too many login attempts. Please try again in ${ipLimit.retryAfterSeconds} seconds.`,
+      429,
+    );
   }
 
   // Cast to any — database types are not yet generated

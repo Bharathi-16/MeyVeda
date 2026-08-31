@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { HPRBadge } from "@/components/Badges";
+import { getNavContext } from "@/lib/nav-context-client";
 import { useQuery } from "@/hooks/useQuery";
 import { apiClient } from "@/shared/api/api-client";
 import { useNewDoctorProfile } from "@/hooks/use-new-doctor";
@@ -13,6 +14,7 @@ import { useAppointments } from "@/hooks/use-appointments";
 import { useFavorites } from "@/hooks/use-favorites";
 import { useAuth } from "@/contexts/auth-context";
 import { formatCurrency, cn } from "@/lib/utils";
+import { toast } from "react-hot-toast";
 
 function useNewDoctorSlots(doctorId: string | undefined, date: string) {
   return useQuery<any[]>(
@@ -122,11 +124,52 @@ const disciplineStyles: Record<string, { bg: string; text: string; border: strin
 };
 
 export default function DoctorProfileClient() {
-  const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { user } = useAuth();
   const { favoriteIds, toggleFavorite } = useFavorites(user?.id);
-  const wishlisted = !!id && favoriteIds.has(id);
+
+  const [navContext, setNavContextState] = useState<{ doctorId: string } | null | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    getNavContext<{ doctorId: string }>("doctor").then((result) => {
+      if (!cancelled) setNavContextState(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (navContext === null) {
+      router.replace("/discover");
+    }
+  }, [navContext, router]);
+
+  const id = navContext?.doctorId ?? "";
+
+  // Persists the selected doctor/slot/date/mode server-side (short-lived
+  // signed cookie) instead of carrying those identifiers in the URL, then
+  // navigates to a clean /booking route.
+  async function goToBooking(selection: {
+    doctorId: string;
+    slotId: string;
+    slot: string;
+    date: string;
+    mode: "video" | "clinic";
+    availableModes: ("video" | "clinic")[];
+  }) {
+    try {
+      await apiClient("/api/booking/draft", {
+        method: "POST",
+        body: JSON.stringify(selection),
+      });
+      router.push("/booking");
+    } catch (error) {
+      console.error("Failed to start booking:", error);
+      toast.error("Please sign in to book this slot");
+    }
+  }
 
   // Fetch current patient's appointments to detect their booked slots
   const { data: myAppointments } = useAppointments(user?.id);
@@ -165,6 +208,8 @@ export default function DoctorProfileClient() {
       }
     : null;
 
+  const wishlisted = !!doctor?.id && favoriteIds.has(doctor.id);
+
   const style = doctor
     ? disciplineStyles[doctor.discipline] || {
         bg: "bg-neutral-50 text-neutral-850 border-neutral-200",
@@ -187,9 +232,10 @@ export default function DoctorProfileClient() {
     return () => clearInterval(timer);
   }, []);
 
-  // Available dates queries
-  const { data: legacyDates, loading: legacyDatesLoading } = usePractitionerAvailableDates(id);
-  const { data: newDates, loading: newDatesLoading } = useNewDoctorAvailableDates(id);
+  // Available dates queries — keyed by the resolved practitioner UUID, not
+  // the route's public slug.
+  const { data: legacyDates, loading: legacyDatesLoading } = usePractitionerAvailableDates(doctor?.id);
+  const { data: newDates, loading: newDatesLoading } = useNewDoctorAvailableDates(doctor?.id);
 
   const rawAvailableDates = isLegacy ? legacyDates : newDates;
   const datesLoading = isLegacy ? legacyDatesLoading : newDatesLoading;
@@ -250,9 +296,10 @@ export default function DoctorProfileClient() {
     }
   };
 
-  // Fetch slots and reviews dynamically
-  const legacySlotsQuery = usePractitionerSlots(id, selectedDate);
-  const newSlotsQuery = useNewDoctorSlots(id, selectedDate);
+  // Fetch slots and reviews dynamically — keyed by the resolved
+  // practitioner UUID, not the route's public slug.
+  const legacySlotsQuery = usePractitionerSlots(doctor?.id, selectedDate);
+  const newSlotsQuery = useNewDoctorSlots(doctor?.id, selectedDate);
 
   // Deduplicate legacy slots by startTime as well (safety)
   const rawSlots = isLegacy ? (legacySlotsQuery.data ?? []) : (newSlotsQuery.data ?? []);
@@ -274,14 +321,14 @@ export default function DoctorProfileClient() {
   // Derive the current patient's booked slot for this doctor + selected date
   // Must be declared BEFORE any early returns to satisfy Rules of Hooks.
   const myBookedSlotForThisDate = useMemo(() => {
-    if (!myAppointments || !selectedDate) return null;
+    if (!myAppointments || !selectedDate || !doctor?.id) return null;
     return myAppointments.find((appt) => {
-      const isSameDoctor = appt.practitionerId === id;
+      const isSameDoctor = appt.practitionerId === doctor.id;
       const isSameDate = appt.dateRaw === selectedDate;
       const isActive = appt.status === "upcoming";
       return isSameDoctor && isSameDate && isActive;
     }) ?? null;
-  }, [myAppointments, selectedDate, id]);
+  }, [myAppointments, selectedDate, doctor?.id]);
 
   if (legacyDocLoading && newDocLoading) {
     return (
@@ -358,7 +405,7 @@ export default function DoctorProfileClient() {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => id && toggleFavorite(id)}
+            onClick={() => doctor?.id && toggleFavorite(doctor.id)}
             className={cn(
               "p-2.5 rounded-xl border transition-all cursor-pointer active:scale-95 flex items-center gap-1.5",
               wishlisted
@@ -651,24 +698,29 @@ export default function DoctorProfileClient() {
                             ? "bg-black text-white border-black font-bold shadow-3xs"
                             : "bg-white hover:bg-neutral-100 border-neutral-300 text-black font-bold";
 
-                          // Build booking URL — pass modes so booking page configures itself
-                          const modesParam = slotModes.join(",");
-                          const bookingUrl = `/booking?doctor=${doctor.id}&slot=${slot.startTime}&slotId=${slot.id}&date=${selectedDate}&mode=${slotModes[0]}&availableModes=${modesParam}`;
-
                           return (
-                            <Link key={slot.id} href={bookingUrl}>
-                              <button
-                                onClick={() => setSelectedSlot(slot)}
-                                className={cn(
-                                  "text-[11px] px-3 py-1.5 rounded-xl border transition-all duration-200 cursor-pointer active:scale-95",
-                                  baseClass
-                                )}
-                              >
-                                <span className="flex items-center justify-center font-bold">
-                                  {slot.startTime}
-                                </span>
-                              </button>
-                            </Link>
+                            <button
+                              key={slot.id}
+                              onClick={() => {
+                                setSelectedSlot(slot);
+                                void goToBooking({
+                                  doctorId: doctor.id,
+                                  slotId: slot.id,
+                                  slot: slot.startTime,
+                                  date: selectedDate,
+                                  mode: slotModes[0],
+                                  availableModes: slotModes,
+                                });
+                              }}
+                              className={cn(
+                                "text-[11px] px-3 py-1.5 rounded-xl border transition-all duration-200 cursor-pointer active:scale-95",
+                                baseClass
+                              )}
+                            >
+                              <span className="flex items-center justify-center font-bold">
+                                {slot.startTime}
+                              </span>
+                            </button>
                           );
                         })}
                       </div>

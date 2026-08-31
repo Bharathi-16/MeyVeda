@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { setNavContext } from "@/lib/nav-context-client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -99,26 +100,30 @@ export default function WalkInPage() {
     setStep(s => Math.max(s - 1, 1) as NewStep);
   }
 
-  function startConsultation() {
+  async function startConsultation() {
     setStarting(true);
-    const visitParams = new URLSearchParams({
+
+    const visitContext = {
       wc: visit.complaint, wd: visit.duration,
       wm: visit.mode, ws: visit.system, wpr: visit.priority, wa: visit.allergies,
-    });
+    };
 
     if (mode === "existing" && selected) {
       // Existing patient: open their EMR with visit context appended
-      router.push(`/pro/emr?patient=${selected.id}&${visitParams.toString()}`);
+      await setNavContext("emr", { patient: selected.id, ...visitContext });
     } else {
-      // New patient: full walk-in params
-      const params = new URLSearchParams({
+      // New patient: full walk-in details — carried server-side instead of
+      // the URL so the patient's name/phone/DOB never land in the browser
+      // bar or history.
+      await setNavContext("emr", {
         walkIn: "1",
         wn: patient.name, wp: patient.phone, wg: patient.gender,
         wdob: patient.dob, wbg: patient.bloodGroup,
-        ...Object.fromEntries(visitParams),
+        ...visitContext,
       });
-      router.push(`/pro/emr?${params.toString()}`);
     }
+
+    router.push("/pro/emr");
   }
 
   const step1Valid  = patient.name.trim() && patient.phone.length >= 10;

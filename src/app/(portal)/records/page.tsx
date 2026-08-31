@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
 import { useHealthRecords } from "@/hooks/use-emr";
+import { getNavContext } from "@/lib/nav-context-client";
 import { usePatientProfile } from "@/hooks/use-profile";
 import { fetchDetailedConsultations } from "@/hooks/use-consultations";
 import { useFamilyMembers } from "@/hooks/use-family";
@@ -43,7 +43,6 @@ export default function RecordsPage() {
 
 function RecordsPageContent() {
   const { user } = useAuth();
-  const searchParams = useSearchParams();
 
   const [activeTab, setActiveTab] = useState<FilterTab>("All");
   const [searchQuery, setSearchQuery] = useState("");
@@ -56,10 +55,14 @@ function RecordsPageContent() {
   const [customDate, setCustomDate] = useState<string | null>(null);
   const [openDateDropdown, setOpenDateDropdown] = useState(false);
 
-  const [selectedFamilyMemberId, setSelectedFamilyMemberId] = useState<string | null>(
-    () => searchParams.get("familyMemberId"),
-  );
+  const [selectedFamilyMemberId, setSelectedFamilyMemberId] = useState<string | null>(null);
   const [openMemberDropdown, setOpenMemberDropdown] = useState(false);
+
+  useEffect(() => {
+    getNavContext<{ familyMemberId: string }>("records-family").then((result) => {
+      if (result?.familyMemberId) setSelectedFamilyMemberId(result.familyMemberId);
+    });
+  }, []);
 
   const isWithinDateFilter = useCallback((recordDateStr: string) => {
     if (dateFilterType === "all") return true;

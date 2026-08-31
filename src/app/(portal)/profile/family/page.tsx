@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
+import { setNavContext } from "@/lib/nav-context-client";
 import {
   useFamilyMembers,
   addFamilyMemberApi,
@@ -21,6 +23,7 @@ const RELATIONS: Relation[] = ["Spouse", "Parent", "Child", "Sibling", "Other"];
 const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 
 export default function FamilyProfilesPage() {
+  const router = useRouter();
   const { user } = useAuth();
   const { data: members = [], loading, refetch } = useFamilyMembers(user?.id);
 
@@ -366,11 +369,15 @@ export default function FamilyProfilesPage() {
 
               {/* Actions */}
               <div className="flex gap-2">
-                <Link href={`/records?familyMemberId=${member.id}`}>
-                  <button className="px-6 py-2 border border-border rounded-xl text-xs font-medium text-muted-foreground hover:bg-muted transition-colors">
-                    Records
-                  </button>
-                </Link>
+                <button
+                  onClick={async () => {
+                    await setNavContext("records-family", { familyMemberId: member.id });
+                    router.push("/records");
+                  }}
+                  className="px-6 py-2 border border-border rounded-xl text-xs font-medium text-muted-foreground hover:bg-muted transition-colors"
+                >
+                  Records
+                </button>
               </div>
 
               {/* Expanded menu */}

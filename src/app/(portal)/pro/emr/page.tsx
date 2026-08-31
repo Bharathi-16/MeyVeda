@@ -1,9 +1,17 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useState, useEffect } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { getNavContext } from "@/lib/nav-context-client";
+
+type EmrNavContext = {
+  walkIn?: string;
+  wn?: string; wp?: string; wg?: string; wdob?: string; wbg?: string;
+  wm?: string; ws?: string; wpr?: string; wa?: string; wc?: string; wd?: string;
+  patient?: string;
+};
 
 type ClinicalTab = "rogi" | "ashtavidha" | "vinischaya" | "chikitsa";
 
@@ -85,24 +93,42 @@ const SROTAS_SYSTEMS = [
 ];
 
 function EMRContent() {
-  const params = useSearchParams();
-  const isWalkIn = params.get("walkIn") === "1";
+  const router = useRouter();
+  const [context, setContext] = useState<EmrNavContext | null | undefined>(undefined);
 
-  // Walk-in patient details from URL
-  const walkInName    = params.get("wn") ?? "";
-  const walkInPhone   = params.get("wp") ?? "";
-  const walkInGender  = params.get("wg") ?? "";
-  const walkInDob     = params.get("wdob") ?? "";
-  const walkInBlood   = params.get("wbg") ?? "";
-  const walkInMode    = params.get("wm") ?? "clinic";
-  const walkInSystem  = params.get("ws") ?? "Ayurveda";
-  const walkInPriority = params.get("wpr") ?? "normal";
-  const walkInAllergies = params.get("wa") ?? "";
-  const walkInComplaint = params.get("wc") ?? "";
-  const walkInDuration  = params.get("wd") ?? "";
+  useEffect(() => {
+    let cancelled = false;
+    getNavContext<EmrNavContext>("emr").then((result) => {
+      if (!cancelled) setContext(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (context === null) {
+      router.replace("/pro/walk-in");
+    }
+  }, [context, router]);
+
+  const isWalkIn = context?.walkIn === "1";
+
+  // Walk-in patient details, carried server-side instead of the URL
+  const walkInName    = context?.wn ?? "";
+  const walkInPhone   = context?.wp ?? "";
+  const walkInGender  = context?.wg ?? "";
+  const walkInDob     = context?.wdob ?? "";
+  const walkInBlood   = context?.wbg ?? "";
+  const walkInMode    = context?.wm ?? "clinic";
+  const walkInSystem  = context?.ws ?? "Ayurveda";
+  const walkInPriority = context?.wpr ?? "normal";
+  const walkInAllergies = context?.wa ?? "";
+  const walkInComplaint = context?.wc ?? "";
+  const walkInDuration  = context?.wd ?? "";
 
   // Regular (scheduled) patient
-  const patientId = params.get("patient") ?? "p1";
+  const patientId = context?.patient ?? "p1";
   const scheduledName = patientId === "p1" ? "Rohit Kumar" : patientId === "p2" ? "Meera Patel" : "Suresh Rao";
 
   const patientName = isWalkIn ? walkInName : scheduledName;

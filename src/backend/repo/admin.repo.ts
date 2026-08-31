@@ -91,7 +91,7 @@ export class AdminRepository {
           if (u.id && !existingUserIds.has(u.id)) {
             const nameFromEmail = u.email ? u.email.split("@")[0] : "Practitioner";
             const formattedName = nameFromEmail.charAt(0).toUpperCase() + nameFromEmail.slice(1);
-            
+
             await supabase.from("practitioners").insert({
               user_id: u.id,
               full_name: `Dr. ${formattedName}`,

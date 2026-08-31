@@ -3,6 +3,7 @@ import { DiscoverService } from "../service/discover.service";
 import { requireAuth } from "@/shared/auth/require-auth";
 import { getOptionalAuthUser } from "@/shared/auth/get-auth-user";
 import { AppError } from "@/shared/api/api-error";
+import { checkRateLimit } from "@/shared/security/rate-limit";
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Internal server error";
@@ -139,6 +140,15 @@ export async function getNewDoctorAvailableDatesController(req: NextRequest) {
 export async function bookNewDoctorAppointmentController(req: NextRequest) {
   try {
     const authUser = await requireAuth(req);
+
+    const limit = checkRateLimit(`booking:create:${authUser.id}`, 10, 60 * 60);
+    if (!limit.allowed) {
+      throw new AppError(
+        `Too many booking attempts. Please try again in ${limit.retryAfterSeconds} seconds.`,
+        429,
+      );
+    }
+
     const body = await req.json();
     await DiscoverService.bookNewDoctorAppointment(authUser, body);
     return NextResponse.json({ success: true, message: "Appointment booked successfully" }, { status: 201 });

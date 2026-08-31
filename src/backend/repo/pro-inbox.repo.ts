@@ -2,6 +2,7 @@ import { createClient } from "@/shared/db/supabase.server";
 
 export type InboxThread = {
   id: string;
+  patientId: string;
   patientName: string;
   patientInitials: string;
   lastMessage: string;
@@ -43,7 +44,7 @@ export class ProInboxRepository {
     const { data: consults, error } = await supabase
       .from("consultations")
       .select(`
-        id, created_at,
+        id, created_at, patient_id,
         patient:patients ( full_name ),
         messages:bounded_messages ( content, sent_at, read_at, direction )
       `)
@@ -66,6 +67,7 @@ export class ProInboxRepository {
         const name = c.patient?.full_name ?? "Patient";
         return {
           id: c.id,
+          patientId: c.patient_id,
           patientName: name,
           patientInitials: name.split(" ").filter((w: string) => w).map((w: string) => w[0]).join("").slice(0, 2).toUpperCase(),
           lastMessage: last?.content ?? "",

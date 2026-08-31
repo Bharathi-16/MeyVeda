@@ -1,5 +1,6 @@
 export type InboxThread = {
   id: string;
+  patientId: string;
   patientName: string;
   patientInitials: string;
   lastMessage: string;

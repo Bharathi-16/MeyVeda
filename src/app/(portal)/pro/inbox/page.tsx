@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import type { InboxThread, MessageRow } from "./type";
+import { setNavContext } from "@/lib/nav-context-client";
 
 async function fetchInbox(): Promise<InboxThread[]> {
   const response = await fetch("/api/pro-inbox", { method: "GET", credentials: "include", cache: "no-store" });
@@ -41,6 +42,7 @@ async function sendMessage(consultationId: string, content: string): Promise<voi
 }
 
 export default function InboxPage() {
+  const router = useRouter();
   const [threads, setThreads] = useState<InboxThread[]>([]);
   const [inboxLoading, setInboxLoading] = useState(true);
   const [messages, setMessages] = useState<MessageRow[]>([]);
@@ -172,9 +174,15 @@ export default function InboxPage() {
                   <p className="text-sm font-semibold text-foreground">{activeThread.patientName}</p>
                   <p className="text-[10px] text-muted-foreground">Active patient · Bounded channel · Encrypted</p>
                 </div>
-                <Link href={`/pro/patient/${activeThread.patientName}`}>
-                  <button className="text-xs text-herb-green font-medium hover:underline">View Intake</button>
-                </Link>
+                <button
+                  onClick={async () => {
+                    await setNavContext("patient", { patientId: activeThread.patientId });
+                    router.push("/pro/patient");
+                  }}
+                  className="text-xs text-herb-green font-medium hover:underline"
+                >
+                  View Intake
+                </button>
               </div>
 
               {/* Messages */}

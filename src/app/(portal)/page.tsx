@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ABHABadge } from "@/components/Badges";
 import { PractitionerCard } from "@/components/PractitionerCard";
 import { UpcomingCarousel } from "@/components/UpcomingCarousel";
@@ -12,6 +13,7 @@ import { usePatientProfile } from "@/hooks/use-profile";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import { ENABLE_VIDEO_CONSULTATION } from "@/lib/feature-flags";
+import { setNavContext } from "@/lib/nav-context-client";
 import {
   FileText, Download, User, Calendar, Pill, Heart, Award, Clock, ArrowRight,
   Sun, Sunrise, Sunset, Moon, Utensils, UtensilsCrossed, Check, X
@@ -50,6 +52,7 @@ const parseTiming = (timing: string) => {
 };
 
 export default function HomePage() {
+  const router = useRouter();
   const { user } = useAuth();
   const displayName = user?.name?.trim() || "there";
   
@@ -278,17 +281,25 @@ export default function HomePage() {
                     <div className="mt-6 flex items-center gap-3 flex-wrap">
                       {ENABLE_VIDEO_CONSULTATION ? (
                         <>
-                          <Link href={`/consult?id=${nextUpcoming.consultationId || nextUpcoming.id}`}>
-                            <button className="px-5 py-2.5 bg-white text-herb-green text-xs font-black rounded-xl hover:bg-white/95 transition-all shadow-md active:scale-95 flex items-center gap-2">
-                              Join Room
-                              <ArrowRight size={14} />
-                            </button>
-                          </Link>
-                          <Link href={`/waiting-room?id=${nextUpcoming.id}`}>
-                            <button className="px-5 py-2.5 bg-white/15 text-white text-xs font-bold rounded-xl hover:bg-white/25 border border-white/20 transition-all active:scale-95 shadow-sm">
-                              Waiting Room
-                            </button>
-                          </Link>
+                          <button
+                            onClick={async () => {
+                              await setNavContext("video", { appointmentId: nextUpcoming.id });
+                              router.push("/consult");
+                            }}
+                            className="px-5 py-2.5 bg-white text-herb-green text-xs font-black rounded-xl hover:bg-white/95 transition-all shadow-md active:scale-95 flex items-center gap-2"
+                          >
+                            Join Room
+                            <ArrowRight size={14} />
+                          </button>
+                          <button
+                            onClick={async () => {
+                              await setNavContext("video", { appointmentId: nextUpcoming.id });
+                              router.push("/waiting-room");
+                            }}
+                            className="px-5 py-2.5 bg-white/15 text-white text-xs font-bold rounded-xl hover:bg-white/25 border border-white/20 transition-all active:scale-95 shadow-sm"
+                          >
+                            Waiting Room
+                          </button>
                         </>
                       ) : (
                         <Link href="/appointments">

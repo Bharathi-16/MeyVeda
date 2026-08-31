@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ConsultationService } from "@/backend/service/consultation.service";
 import { getAuthUserFromCookies } from "@/shared/auth/get-auth-user-server";
 import { InvoiceDialog } from "@/components/consultation-report/InvoiceDialog";
+import { UpcomingCallsButton } from "./UpcomingCallsButton";
 import { ArrowLeft, User, Activity, FileText, Pill, Stethoscope, Download, FileUp, Clock, Calendar } from "lucide-react";
 
 export default async function RecordDetailsPage({ params }: { params: Promise<{ id: string }> }) {
@@ -121,12 +122,7 @@ export default async function RecordDetailsPage({ params }: { params: Promise<{ 
                 Consultation Details
               </h2>
 
-              <Link href={`/booking?doctor=${data.practitioner_id}`}>
-                <button className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-xl shadow-sm shadow-indigo-600/20 transition-all">
-                  <Calendar className="w-4 h-4" />
-                  Upcoming Calls
-                </button>
-              </Link>
+              <UpcomingCallsButton practitionerId={data.practitioner_id} />
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

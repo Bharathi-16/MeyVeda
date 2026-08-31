@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
+import { setNavContext } from "@/lib/nav-context-client";
 async function getRegistryPatients(): Promise<Patient[]> {
   const response = await fetch("/api/registry", {
     method: "GET",
@@ -93,6 +94,7 @@ const STATUS_LABEL: Record<AppointmentEntry["status"], string> = {
 };
 
 export default function PatientsPage() {
+  const router = useRouter();
   const { user } = useAuth();
   const [query, setQuery] = useState("");
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -313,12 +315,16 @@ export default function PatientsPage() {
                 <h2 className="text-2xl font-bold text-slate-900">{activePatient.name}</h2>
                 <p className="text-sm text-slate-500 mt-1">{activePatient.age} years old • {activePatient.gender} • {activePatient.phone}</p>
               </div>
-              <Link href={`/pro/patient/${activePatient.id}`}>
-                <button className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4.5 py-2.5 rounded-xl shadow-md shadow-indigo-600/10 transition-all">
-                  <Edit3 className="w-4 h-4" />
-                  Update Record
-                </button>
-              </Link>
+              <button
+                onClick={async () => {
+                  await setNavContext("patient", { patientId: activePatient.id });
+                  router.push("/pro/patient");
+                }}
+                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4.5 py-2.5 rounded-xl shadow-md shadow-indigo-600/10 transition-all"
+              >
+                <Edit3 className="w-4 h-4" />
+                Update Record
+              </button>
             </div>
 
             {/* Patient summary strip */}
@@ -369,14 +375,17 @@ export default function PatientsPage() {
                           <p className="text-xs text-slate-400 font-medium mt-0.5">{fm.age} y • {fm.gender}</p>
                         </div>
                       </div>
-                      <Link
-                        href={`/pro/patient/${fm.patientId}`}
-                        onClick={(e) => e.stopPropagation()}
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          await setNavContext("patient", { patientId: fm.patientId });
+                          router.push("/pro/patient");
+                        }}
                         className="flex-shrink-0 flex items-center gap-1.5 border border-slate-200 hover:bg-white text-xs font-semibold text-slate-700 px-3 py-1.5 rounded-lg transition-colors"
                       >
                         <Edit3 className="w-3.5 h-3.5" />
                         Update Record
-                      </Link>
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -389,13 +398,16 @@ export default function PatientsPage() {
                 <Calendar className="w-4 h-4 text-indigo-500" />
                 Booked Appointments
               </h3>
-              <Link
-                href={`/pro/prescriptions?patientName=${encodeURIComponent(activePatient.name)}`}
+              <button
+                onClick={async () => {
+                  await setNavContext("prescriptions", { patientId: activePatient.id });
+                  router.push("/pro/prescriptions");
+                }}
                 className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 transition-colors"
               >
                 View past prescriptions
                 <ChevronRight className="w-3.5 h-3.5" />
-              </Link>
+              </button>
             </div>
 
             {/* Today / Upcoming / Past sub-tabs — filters the list below */}

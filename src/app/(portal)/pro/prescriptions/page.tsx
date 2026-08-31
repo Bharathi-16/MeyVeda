@@ -3,10 +3,11 @@
 
 import Link from "next/link";
 import { useState, useRef, Suspense, useCallback, useEffect } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import { usePractitionerPrescriptions } from "@/hooks/use-prescriptions";
+import { getNavContext, setNavContext } from "@/lib/nav-context-client";
 import { InvoiceDialog } from "@/components/consultation-report/InvoiceDialog";
 import {
   FileText, Download, Calendar, User, Search, RefreshCw,
@@ -51,13 +52,11 @@ async function getDependentPatientIds(): Promise<Set<string>> {
 
 function PrescriptionsContent() {
   const { user } = useAuth();
-  const searchParams = useSearchParams();
   const router = useRouter();
-  const patientNameQuery = searchParams.get("patientName");
 
   const { data: prescriptions = [], loading } = usePractitionerPrescriptions(user?.id);
 
-  const [searchQuery, setSearchQuery] = useState(patientNameQuery || "");
+  const [searchQuery, setSearchQuery] = useState("");
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
   const [selectedRxId, setSelectedRxId] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -74,6 +73,12 @@ function PrescriptionsContent() {
   useEffect(() => {
     getDependentPatientIds().then(setDependentPatientIds).catch(() => setDependentPatientIds(new Set()));
   }, [user?.id]);
+
+  useEffect(() => {
+    getNavContext<{ patientId: string }>("prescriptions").then((result) => {
+      if (result?.patientId) setSelectedPatientId(result.patientId);
+    });
+  }, []);
 
   const isWithinDateFilter = useCallback((recordDateStr: string) => {
     if (dateFilterType === "all") return true;
@@ -408,11 +413,16 @@ function PrescriptionsContent() {
                 <h2 className="text-2xl font-bold text-slate-900">{activePatient?.name}&apos;s Medical History</h2>
                 <p className="text-sm text-slate-500 mt-1">{activePatient?.age} years old • {activePatient?.gender} • {activePatient?.phone}</p>
               </div>
-              <Link href={`/pro/patient/${activePatient?.id}`}>
-                <button className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4.5 py-2.5 rounded-xl shadow-md shadow-indigo-600/10 transition-all">
-                  Create New Record
-                </button>
-              </Link>
+              <button
+                onClick={async () => {
+                  if (!activePatient?.id) return;
+                  await setNavContext("patient", { patientId: activePatient.id });
+                  router.push("/pro/patient");
+                }}
+                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4.5 py-2.5 rounded-xl shadow-md shadow-indigo-600/10 transition-all"
+              >
+                Create New Record
+              </button>
             </div>
 
             {familyMembers.length > 0 && (

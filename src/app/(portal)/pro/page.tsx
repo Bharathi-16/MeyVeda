@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { setNavContext } from "@/lib/nav-context-client";
 import {
   Calendar,
   Check,
@@ -154,15 +156,8 @@ function isAppointmentTimePast(
   return appointmentDate.getTime() < Date.now();
 }
 
-function buildConsultationHref(
-  appointmentId: string,
-): string {
-  return `/consult?appointmentId=${encodeURIComponent(
-    appointmentId,
-  )}`;
-}
-
 export default function ProDashboardPage() {
+  const router = useRouter();
   const { user } = useAuth();
 
   // ── Core practitioner data ──────────────────────────────────────────────────
@@ -676,14 +671,18 @@ export default function ProDashboardPage() {
                                             Consult
                                           </span>
                                         ) : (
-                                          <Link
-                                            href={`/pro/patient/${encodeURIComponent(
-                                              patient.id,
-                                            )}?appointmentId=${encodeURIComponent(patient.appointmentId)}`}
+                                          <button
+                                            onClick={async () => {
+                                              await setNavContext("patient", {
+                                                patientId: patient.id,
+                                                appointmentId: patient.appointmentId,
+                                              });
+                                              router.push("/pro/patient");
+                                            }}
                                             className="inline-flex items-center justify-center rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
                                           >
                                             Consult
-                                          </Link>
+                                          </button>
                                         )}
 
                                       </div>

@@ -3,8 +3,10 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { setNavContext } from "@/lib/nav-context-client";
 import { ENABLE_VIDEO_CONSULTATION } from "@/lib/feature-flags";
 import type { AppointmentRow } from "@/features/appointments/appointments.type";
 import {
@@ -99,6 +101,7 @@ async function cancelAppointment(appointmentId: string, reason: string): Promise
 }
 
 export default function AppointmentsPage() {
+  const router = useRouter();
   const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -274,13 +277,16 @@ export default function AppointmentsPage() {
 
             <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
               {ENABLE_VIDEO_CONSULTATION && isUpcoming && appt.mode === "video" && (
-                <Link
-                  href={`/waiting-room?appointmentId=${encodeURIComponent(appt.id)}`}
+                <button
+                  onClick={async () => {
+                    await setNavContext("video", { appointmentId: appt.id });
+                    router.push("/waiting-room");
+                  }}
                   className="inline-flex items-center justify-center gap-1.5 rounded-full bg-herb-green px-4 py-2 text-xs font-bold text-white hover:bg-herb-green/90 transition-colors"
                 >
                   <Video size={13} />
                   Join
-                </Link>
+                </button>
               )}
 
               {isCancelled ? (
@@ -290,11 +296,15 @@ export default function AppointmentsPage() {
                   </button>
                 </Link>
               ) : isUpcoming ? (
-                <Link href={`/doctor/${appt.practitionerId}`}>
-                  <button className="py-2 px-4 rounded-full bg-herb-green/10 hover:bg-herb-green/15 active:scale-[0.98] text-xs font-bold text-herb-green transition-all cursor-pointer">
-                    View Doctor
-                  </button>
-                </Link>
+                <button
+                  onClick={async () => {
+                    await setNavContext("doctor", { doctorId: appt.practitionerId });
+                    router.push("/doctor");
+                  }}
+                  className="py-2 px-4 rounded-full bg-herb-green/10 hover:bg-herb-green/15 active:scale-[0.98] text-xs font-bold text-herb-green transition-all cursor-pointer"
+                >
+                  View Doctor
+                </button>
               ) : null}
 
               {isUpcoming && (

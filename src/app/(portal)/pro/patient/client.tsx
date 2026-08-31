@@ -3,13 +3,14 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useState, useRef, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@/hooks/useQuery";
 import { apiClient } from "@/shared/api/api-client";
 import { useAuth } from "@/contexts/auth-context";
+import { getNavContext, setNavContext } from "@/lib/nav-context-client";
 import { createClient } from "@/lib/supabase/client";
 import { usePractitioner } from "@/hooks/use-discover";
 import { usePractitionerSlots, usePractitionerAvailableDates } from "@/hooks/use-availability";
@@ -249,13 +250,32 @@ const SectionCard = ({ title, icon: Icon, children }: { title: string, icon: any
   </div>
 );
 
+type PatientNavContext = { patientId: string; appointmentId?: string };
+
 export default function PatientIntakeClient() {
-  const params = useParams();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { user } = useAuth();
-  const id = (params.id as string) || "p1";
-  const appointmentId = searchParams.get("appointmentId") || undefined;
+
+  const [navContext, setNavContextState] = useState<PatientNavContext | null | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    getNavContext<PatientNavContext>("patient").then((result) => {
+      if (!cancelled) setNavContextState(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (navContext === null) {
+      router.replace("/pro/patients");
+    }
+  }, [navContext, router]);
+
+  const id = navContext?.patientId ?? "";
+  const appointmentId = navContext?.appointmentId;
 
   const { data: intakeData, loading: isLoading, error } = usePatientIntakeDetails(id, appointmentId);
   const patient = intakeData?.patient;
@@ -601,8 +621,9 @@ export default function PatientIntakeClient() {
 
       if (result.success) {
         setIsSaved(true);
-        setTimeout(() => {
-          window.location.href = `/pro/prescriptions?patientName=${encodeURIComponent(patient?.name || "")}`;
+        setTimeout(async () => {
+          await setNavContext("prescriptions", { patientId: patient?.id || id });
+          router.push("/pro/prescriptions");
         }, 1200);
       } else {
         alert("Failed to save consultation: " + result.error);
@@ -1347,7 +1368,10 @@ export default function PatientIntakeClient() {
                 Saved Successfully
               </span>
               <button
-                onClick={() => router.push(`/pro/prescriptions?patientName=${encodeURIComponent(patient?.name || "")}`)}
+                onClick={async () => {
+                  await setNavContext("prescriptions", { patientId: patient?.id || id });
+                  router.push("/pro/prescriptions");
+                }}
                 className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-semibold text-sm px-6 py-2.5 rounded-xl shadow-[0_4px_12px_rgb(16,185,129,0.25)] hover:shadow-[0_6px_16px_rgb(16,185,129,0.35)] hover:-translate-y-0.5 transition-all min-w-[180px]"
               >
                 <FileText className="w-4 h-4" />

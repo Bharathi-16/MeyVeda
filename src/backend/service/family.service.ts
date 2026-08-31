@@ -52,7 +52,12 @@ export class FamilyService {
   }
 
   static async updateFamilyMember(authUser: AuthUser, id: string, member: { fullName: string; relationship: string; dob: string; gender: string; phone?: string; bloodGroup?: string; height?: number; weight?: number; }) {
-    // Should check if it belongs to user but we assume auth controls access well enough
+    const ownerPatientId = await AppointmentsRepository.getPatientIdFromUserId(authUser.id);
+    if (!ownerPatientId) throw new AppError("Patient not found", 404);
+
+    const memberPatientId = await FamilyRepository.getFamilyMemberPatientId(id, ownerPatientId);
+    if (!memberPatientId) throw new AppError("Family member not found", 404);
+
     await FamilyRepository.updateFamilyMember(id, {
       ...member,
       gender: normalizeGender(member.gender),
@@ -62,7 +67,12 @@ export class FamilyService {
   }
 
   static async deleteFamilyMember(authUser: AuthUser, id: string) {
-    // Should check if it belongs to user but we assume auth controls access well enough
+    const ownerPatientId = await AppointmentsRepository.getPatientIdFromUserId(authUser.id);
+    if (!ownerPatientId) throw new AppError("Patient not found", 404);
+
+    const memberPatientId = await FamilyRepository.getFamilyMemberPatientId(id, ownerPatientId);
+    if (!memberPatientId) throw new AppError("Family member not found", 404);
+
     await FamilyRepository.deleteFamilyMember(id);
     return { success: true };
   }

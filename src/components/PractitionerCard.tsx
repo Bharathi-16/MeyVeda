@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import type { Practitioner } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
-import Link from "next/link";
 import { ShieldCheck, MapPin, Video, Heart, Award, Languages, ChevronRight, Building2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ENABLE_VIDEO_CONSULTATION } from "@/lib/feature-flags";
+import { setNavContext } from "@/lib/nav-context-client";
 
 interface PractitionerCardProps {
   doctor: Practitioner;
@@ -55,9 +56,15 @@ const disciplineStyles: Record<string, { bg: string; text: string; border: strin
 };
 
 export function PractitionerCard({ doctor, compact = false, isFavorite: isFavoriteProp, onToggleFavorite }: PractitionerCardProps) {
+  const router = useRouter();
   const [localFavorite, setLocalFavorite] = useState(false);
   const isFavorite = isFavoriteProp ?? localFavorite;
   const handleToggleFavorite = onToggleFavorite ?? (() => setLocalFavorite((v) => !v));
+
+  async function goToDoctor() {
+    await setNavContext("doctor", { doctorId: doctor.id });
+    router.push("/doctor");
+  }
 
   const style = disciplineStyles[doctor.discipline] || {
     bg: "bg-neutral-50 text-neutral-850 border-neutral-200",
@@ -126,10 +133,10 @@ export function PractitionerCard({ doctor, compact = false, isFavorite: isFavori
             <span className="font-extrabold text-foreground font-mono text-sm">{formatCurrency(doctor.fee)}</span>
           </div>
           
-          <Link href={`/doctor/${doctor.id}`} className="inline-flex items-center gap-1 text-[11px] font-bold text-herb-green bg-herb-green/5 hover:bg-herb-green/10 px-3 py-1.5 rounded-xl border border-herb-green/15 transition-all">
+          <button onClick={goToDoctor} className="inline-flex items-center gap-1 text-[11px] font-bold text-herb-green bg-herb-green/5 hover:bg-herb-green/10 px-3 py-1.5 rounded-xl border border-herb-green/15 transition-all">
             <span>Book Now</span>
             <ChevronRight size={10} />
-          </Link>
+          </button>
         </div>
       </div>
     );
@@ -257,17 +264,13 @@ export function PractitionerCard({ doctor, compact = false, isFavorite: isFavori
 
       {/* Actions */}
       <div className="mt-3.5 flex flex-col gap-2 items-stretch relative z-10">
-        <Link href={`/doctor/${doctor.id}`} className="w-full">
-          <button className="w-full py-2 rounded-full bg-herb-green hover:bg-herb-green-light active:scale-[0.98] font-bold text-xs text-white shadow-xs hover:shadow-md transition-all cursor-pointer">
-            Book Appointment
-          </button>
-        </Link>
+        <button onClick={goToDoctor} className="w-full py-2 rounded-full bg-herb-green hover:bg-herb-green-light active:scale-[0.98] font-bold text-xs text-white shadow-xs hover:shadow-md transition-all cursor-pointer">
+          Book Appointment
+        </button>
 
-        <Link href={`/doctor/${doctor.id}`} className="w-full">
-          <button className="w-full py-2 rounded-full bg-herb-green/10 hover:bg-herb-green/15 active:scale-[0.98] font-bold text-xs text-herb-green transition-all cursor-pointer">
-            View Profile
-          </button>
-        </Link>
+        <button onClick={goToDoctor} className="w-full py-2 rounded-full bg-herb-green/10 hover:bg-herb-green/15 active:scale-[0.98] font-bold text-xs text-herb-green transition-all cursor-pointer">
+          View Profile
+        </button>
       </div>
     </div>
   );

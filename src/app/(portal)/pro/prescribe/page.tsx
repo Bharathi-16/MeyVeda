@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useMemo, useRef, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { getNavContext, setNavContext } from "@/lib/nav-context-client";
 
 // ─── Patient registry ─────────────────────────────────────────────────────────
 
@@ -285,13 +285,10 @@ function MedCell({ row, onChange }: { row: RxRow; onChange: (r: RxRow) => void }
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function PrescribePage() {
-  const searchParams = useSearchParams();
-  const preId = searchParams.get("patient");
+  const router = useRouter();
 
   const [query, setQuery]         = useState("");
-  const [patient, setPatient]     = useState<RegPatient | null>(() =>
-    preId ? (REGISTRY.find(r => r.id === preId) ?? null) : null
-  );
+  const [patient, setPatient]     = useState<RegPatient | null>(null);
   const [rows, setRows]           = useState<RxRow[]>([emptyRow()]);
   const [diagnosis, setDiagnosis] = useState("");
   const [lifestyle, setLifestyle] = useState("");
@@ -299,6 +296,15 @@ export default function PrescribePage() {
   const [notes, setNotes]         = useState("");
   const [signed, setSigned]       = useState(false);
   const [signing, setSigning]     = useState(false);
+
+  useEffect(() => {
+    getNavContext<{ patient: string }>("prescribe").then((result) => {
+      if (result?.patient) {
+        const preselected = REGISTRY.find(r => r.id === result.patient);
+        if (preselected) setPatient(preselected);
+      }
+    });
+  }, []);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -349,11 +355,15 @@ export default function PrescribePage() {
               className="text-xs text-muted-foreground border border-border px-3 py-2 rounded-xl hover:bg-muted transition-colors">
               ← Change Patient
             </button>
-            <Link href={`/pro/emr?patient=${patient.id}`}>
-              <button className="text-xs font-medium border border-border px-3 py-2 rounded-xl hover:bg-muted transition-colors">
-                Open Full EMR
-              </button>
-            </Link>
+            <button
+              onClick={async () => {
+                await setNavContext("emr", { patient: patient.id });
+                router.push("/pro/emr");
+              }}
+              className="text-xs font-medium border border-border px-3 py-2 rounded-xl hover:bg-muted transition-colors"
+            >
+              Open Full EMR
+            </button>
           </div>
         )}
       </div>
@@ -484,11 +494,15 @@ export default function PrescribePage() {
               </div>
 
               <div className="mt-4 pt-3 border-t border-border">
-                <Link href={`/pro/patient/${patient.id}`}>
-                  <button className="text-[11px] text-herb-green font-semibold hover:underline">
-                    Full patient record →
-                  </button>
-                </Link>
+                <button
+                  onClick={async () => {
+                    await setNavContext("patient", { patientId: patient.id });
+                    router.push("/pro/patient");
+                  }}
+                  className="text-[11px] text-herb-green font-semibold hover:underline"
+                >
+                  Full patient record →
+                </button>
               </div>
             </div>
           </div>

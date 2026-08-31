@@ -1,12 +1,32 @@
 "use client";
 
 import { Suspense, useState, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { HPRBadge } from "@/components/Badges";
 import { useNewDoctorProfile } from "@/hooks/use-new-doctor";
 import { usePractitioner } from "@/hooks/use-discover";
 import { useFamilyMembers } from "@/hooks/use-family";
+import { apiClient } from "@/shared/api/api-client";
+import { setNavContext } from "@/lib/nav-context-client";
+
+type BookingDraft = {
+  doctorId: string;
+  slotId: string;
+  slot: string;
+  date: string;
+  mode: "video" | "clinic";
+  availableModes: ("video" | "clinic")[];
+};
+
+async function fetchBookingDraft(): Promise<BookingDraft | null> {
+  try {
+    const result = await apiClient<{ data: BookingDraft }>("/api/booking/draft");
+    return result.data;
+  } catch {
+    return null;
+  }
+}
 
 async function bookAppointment(params: {
   userId: string;
@@ -67,16 +87,34 @@ const PAYMENT_METHODS = [
 ];
 
 function BookingContent() {
-  const params = useSearchParams();
+  const router = useRouter();
   const { user } = useAuth();
 
-  const doctorId = params.get("doctor") ?? "";
-  const slot = params.get("slot") ?? "";
-  const slotId = params.get("slotId") ?? "";
-  const date = params.get("date") ?? new Date().toISOString().split("T")[0];
-  const mode = (params.get("mode") ?? "video") as "video" | "clinic";
-  const availableModesParam = params.get("availableModes") ?? mode;
-  const availableModes = availableModesParam.split(",").filter(Boolean) as ("video" | "clinic")[];
+  const [draft, setDraft] = useState<BookingDraft | null | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchBookingDraft().then((result) => {
+      if (!cancelled) setDraft(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (draft === null) {
+      toast.error("Your booking selection has expired. Please pick a slot again.");
+      router.replace("/discover");
+    }
+  }, [draft, router]);
+
+  const doctorId = draft?.doctorId ?? "";
+  const slot = draft?.slot ?? "";
+  const slotId = draft?.slotId ?? "";
+  const date = draft?.date ?? new Date().toISOString().split("T")[0];
+  const mode = draft?.mode ?? "video";
+  const availableModes = draft?.availableModes?.length ? draft.availableModes : [mode];
 
   // Fetch legacy doctor
   const legacyDocQuery = usePractitioner(doctorId);
@@ -259,7 +297,15 @@ function BookingContent() {
       <div className="flex items-center gap-2 text-xs text-muted-foreground mb-6">
         <Link href="/discover" className="hover:text-foreground">Discover</Link>
         <span>›</span>
-        <Link href={`/doctor/${doctor.id}`} className="hover:text-foreground">{doctor.name}</Link>
+        <button
+          onClick={async () => {
+            await setNavContext("doctor", { doctorId: doctor.id });
+            router.push("/doctor");
+          }}
+          className="hover:text-foreground"
+        >
+          {doctor.name}
+        </button>
         <span>›</span>
         <span className="text-foreground font-medium">Book Appointment</span>
       </div>

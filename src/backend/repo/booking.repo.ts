@@ -210,28 +210,33 @@ async function resolveBookingPatientId(ownerPatientId: string, familyMemberId?: 
   return data.patient_id;
 }
 
+async function getVisiblePatientIds(userId: string): Promise<string[]> {
+  const supabase = createClient();
+  const resolvedPatientId = await resolvePatientId(userId);
+
+  const { data: familyMembers, error: familyMembersError } = await supabase
+    .from("family_members")
+    .select("patient_id")
+    .eq("owner_patient_id", resolvedPatientId)
+    .eq("is_active", true);
+
+  if (familyMembersError) {
+    console.error("getVisiblePatientIds familyMembers error:", familyMembersError);
+    throw new Error(familyMembersError.message);
+  }
+
+  return [
+    resolvedPatientId,
+    ...(familyMembers ?? []).map((member) => member.patient_id),
+  ];
+}
+
 export class BookingRepository {
   static async getAppointments(
-    patientIdInput: string,
+    userId: string,
   ): Promise<AppointmentRow[]> {
     const supabase = createClient();
-    const resolvedPatientId = await resolvePatientId(patientIdInput);
-
-    const { data: familyMembers, error: familyMembersError } = await supabase
-      .from("family_members")
-      .select("patient_id")
-      .eq("owner_patient_id", resolvedPatientId)
-      .eq("is_active", true);
-
-    if (familyMembersError) {
-      console.error("getAppointments familyMembers error:", familyMembersError);
-      throw new Error(familyMembersError.message);
-    }
-
-    const visiblePatientIds = [
-      resolvedPatientId,
-      ...(familyMembers ?? []).map((member) => member.patient_id),
-    ];
+    const visiblePatientIds = await getVisiblePatientIds(userId);
 
     const { data, error } = await supabase
       .from("appointments")
@@ -343,6 +348,56 @@ export class BookingRepository {
         reminder: false,
       };
     });
+  }
+
+  /**
+   * Verifies the appointment belongs to the given user (self or one of
+   * their family members) before allowing any mutation of it.
+   */
+  static async isAppointmentOwnedByUser(
+    appointmentId: string,
+    userId: string,
+  ): Promise<boolean> {
+    const supabase = createClient();
+    const visiblePatientIds = await getVisiblePatientIds(userId);
+
+    const { data, error } = await supabase
+      .from("appointments")
+      .select("patient_id")
+      .eq("id", appointmentId)
+      .maybeSingle();
+
+    if (error) {
+      console.error("isAppointmentOwnedByUser error:", error);
+      return false;
+    }
+
+    return !!data?.patient_id && visiblePatientIds.includes(data.patient_id);
+  }
+
+  /**
+   * Verifies the consultation belongs to the given user (self or one of
+   * their family members) before allowing a rating to be attached to it.
+   */
+  static async isConsultationOwnedByUser(
+    consultationId: string,
+    userId: string,
+  ): Promise<boolean> {
+    const supabase = createClient();
+    const visiblePatientIds = await getVisiblePatientIds(userId);
+
+    const { data, error } = await supabase
+      .from("consultations")
+      .select("patient_id")
+      .eq("id", consultationId)
+      .maybeSingle();
+
+    if (error) {
+      console.error("isConsultationOwnedByUser error:", error);
+      return false;
+    }
+
+    return !!data?.patient_id && visiblePatientIds.includes(data.patient_id);
   }
 
   static async cancelAppointment(

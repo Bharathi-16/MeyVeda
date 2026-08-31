@@ -1,6 +1,8 @@
 import { BookingRepository, type BookAppointmentInput, type SubmitRatingInput, type AppointmentRow } from "../repo/booking.repo";
 import { AppointmentsRepository } from "../repo/appointments.repo";
 import { EmailService } from "./email.service";
+import { AuthUser } from "@/shared/auth/auth.types";
+import { AppError } from "@/shared/api/api-error";
 
 function formatDisplayDate(dateStr?: string | null): string {
   if (!dateStr) return "";
@@ -27,22 +29,15 @@ function formatFee(feePaise: number | null): string | undefined {
 
 export class BookingService {
   static async getAppointments(
-    patientId: string,
+    authUser: AuthUser,
   ): Promise<AppointmentRow[]> {
-    if (!patientId?.trim()) {
-      throw new Error("Patient ID is required");
-    }
-
-    return BookingRepository.getAppointments(patientId);
+    return BookingRepository.getAppointments(authUser.id);
   }
 
   static async bookAppointment(
+    authUser: AuthUser,
     input: BookAppointmentInput,
   ): Promise<void> {
-    if (!input.userId) {
-      throw new Error("User ID is required");
-    }
-
     if (!input.slotId) {
       throw new Error("Slot ID is required");
     }
@@ -55,7 +50,11 @@ export class BookingService {
       throw new Error("Appointment date and time are required");
     }
 
-    const appointment = await BookingRepository.bookAppointment(input);
+    // The authenticated user always books for themselves — a client-supplied
+    // userId is never trusted, whoever it names.
+    const scopedInput: BookAppointmentInput = { ...input, userId: authUser.id };
+
+    const appointment = await BookingRepository.bookAppointment(scopedInput);
 
     const emailDetails = await AppointmentsRepository.getAppointmentEmailDetails(appointment.id);
     if (emailDetails) {
@@ -71,6 +70,7 @@ export class BookingService {
   }
 
   static async cancelAppointment(
+    authUser: AuthUser,
     appointmentId: string,
     reason: string,
   ): Promise<void> {
@@ -80,6 +80,11 @@ export class BookingService {
 
     if (!reason?.trim()) {
       throw new Error("Cancellation reason is required");
+    }
+
+    const owned = await BookingRepository.isAppointmentOwnedByUser(appointmentId, authUser.id);
+    if (!owned) {
+      throw new AppError("Appointment not found", 404);
     }
 
     const emailDetails = await AppointmentsRepository.getAppointmentEmailDetails(appointmentId);
@@ -101,12 +106,22 @@ export class BookingService {
   }
 
   static async submitRating(
+    authUser: AuthUser,
     input: SubmitRatingInput,
   ): Promise<void> {
     if (input.stars < 1 || input.stars > 5) {
       throw new Error("Rating must be between 1 and 5");
     }
 
-    await BookingRepository.submitRating(input);
+    if (!input.consultationId) {
+      throw new Error("Consultation ID is required");
+    }
+
+    const owned = await BookingRepository.isConsultationOwnedByUser(input.consultationId, authUser.id);
+    if (!owned) {
+      throw new AppError("Consultation not found", 404);
+    }
+
+    await BookingRepository.submitRating({ ...input, userId: authUser.id });
   }
 }

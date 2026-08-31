@@ -1,59 +1,77 @@
 import "server-only";
 
-type RateLimitRecord = {
-  timestamps: number[];
+/**
+ * Best-effort in-memory sliding-window rate limiter.
+ *
+ * This process holds the counters, so it only protects a single running
+ * instance — it resets on redeploy and does not share state across
+ * horizontally-scaled instances/pods. That's an acceptable first layer for
+ * this app's current single-instance deployment, but if this ever runs on
+ * multiple instances (e.g. serverless with concurrent invocations), replace
+ * the Map below with a shared store (Redis/Upstash) behind the same
+ * `checkRateLimit` signature — no caller needs to change.
+ */
+
+type Bucket = {
+  count: number;
+  windowStart: number;
 };
 
-// In-memory store for tracking request timestamps per client key
-const rateLimitStore = new Map<string, RateLimitRecord>();
+const buckets = new Map<string, Bucket>();
 
-// Periodically clean up expired records to prevent memory growth
-if (typeof global !== "undefined") {
-  setInterval(() => {
-    const now = Date.now();
-    for (const [key, record] of rateLimitStore.entries()) {
-      // Keep only timestamps within the last 15 minutes (max window)
-      const validTimestamps = record.timestamps.filter((t) => now - t < 15 * 60 * 1000);
-      if (validTimestamps.length === 0) {
-        rateLimitStore.delete(key);
-      } else {
-        record.timestamps = validTimestamps;
-      }
+// Periodically drop stale buckets so this doesn't grow unbounded over the
+// life of the process.
+const SWEEP_INTERVAL_MS = 10 * 60 * 1000;
+let lastSweep = Date.now();
+
+function sweep(now: number) {
+  if (now - lastSweep < SWEEP_INTERVAL_MS) return;
+  lastSweep = now;
+  for (const [key, bucket] of buckets) {
+    if (now - bucket.windowStart > SWEEP_INTERVAL_MS) {
+      buckets.delete(key);
     }
-  }, 5 * 60 * 1000); // Run cleanup every 5 minutes
+  }
 }
 
+export type RateLimitResult = {
+  allowed: boolean;
+  remaining: number;
+  retryAfterSeconds: number;
+};
+
 /**
- * Slide-window rate limiter in-memory.
- * 
- * NOTE FOR PRODUCTION:
- * This is an in-memory implementation suitable for development and single-instance deployments.
- * For serverless / multi-instance production environments (e.g., Vercel, multiple container nodes),
- * this should be replaced with a distributed store like Redis (e.g. Upstash Rate Limit) or database-backed tracking.
- * 
- * @param key Unique identifier for the client (e.g. IP address or User ID)
- * @param limit Maximum number of allowed requests within the window
- * @param windowMs Time window in milliseconds (e.g. 15 minutes = 15 * 60 * 1000)
- * @returns Boolean indicating whether the request is rate-limited (true = blocked)
+ * @param key Unique bucket key, e.g. `otp:send:${ip}:${email}`
+ * @param limit Max requests allowed per window
+ * @param windowSeconds Window length in seconds
  */
-export async function isRateLimited(
+export function checkRateLimit(
   key: string,
   limit: number,
-  windowMs: number
-): Promise<boolean> {
+  windowSeconds: number,
+): RateLimitResult {
   const now = Date.now();
-  const record = rateLimitStore.get(key) || { timestamps: [] };
+  sweep(now);
 
-  // Filter out timestamps outside the current window
-  const activeTimestamps = record.timestamps.filter((t) => now - t < windowMs);
+  const windowMs = windowSeconds * 1000;
+  const existing = buckets.get(key);
 
-  if (activeTimestamps.length >= limit) {
-    return true; // Rate limit exceeded
+  if (!existing || now - existing.windowStart >= windowMs) {
+    buckets.set(key, { count: 1, windowStart: now });
+    return { allowed: true, remaining: limit - 1, retryAfterSeconds: 0 };
   }
 
-  // Record this request
-  activeTimestamps.push(now);
-  rateLimitStore.set(key, { timestamps: activeTimestamps });
+  if (existing.count >= limit) {
+    const retryAfterSeconds = Math.ceil(
+      (existing.windowStart + windowMs - now) / 1000,
+    );
+    return { allowed: false, remaining: 0, retryAfterSeconds };
+  }
 
-  return false;
+  existing.count += 1;
+  return {
+    allowed: true,
+    remaining: limit - existing.count,
+    retryAfterSeconds: 0,
+  };
 }

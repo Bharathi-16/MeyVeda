@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BookingService } from "../service/booking.service";
 import type { BookAppointmentInput, SubmitRatingInput } from "../repo/booking.repo";
+import { requireAuth } from "@/shared/auth/require-auth";
+import { AppError } from "@/shared/api/api-error";
+import { checkRateLimit } from "@/shared/security/rate-limit";
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error
@@ -8,22 +11,17 @@ function getErrorMessage(error: unknown): string {
     : "Internal server error";
 }
 
+function getStatusCode(error: unknown): number {
+  if (error instanceof AppError) return error.statusCode;
+  return 400;
+}
+
 export class BookingController {
   static async getAppointments(request: NextRequest) {
     try {
-      const patientId = request.nextUrl.searchParams.get("patientId");
+      const authUser = await requireAuth(request);
 
-      if (!patientId) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: "patientId is required",
-          },
-          { status: 400 },
-        );
-      }
-
-      const data = await BookingService.getAppointments(patientId);
+      const data = await BookingService.getAppointments(authUser);
 
       return NextResponse.json({
         success: true,
@@ -37,16 +35,26 @@ export class BookingController {
           success: false,
           error: getErrorMessage(error),
         },
-        { status: 500 },
+        { status: getStatusCode(error) },
       );
     }
   }
 
   static async bookAppointment(request: NextRequest) {
     try {
+      const authUser = await requireAuth(request);
+
+      const limit = checkRateLimit(`booking:create:${authUser.id}`, 10, 60 * 60);
+      if (!limit.allowed) {
+        throw new AppError(
+          `Too many booking attempts. Please try again in ${limit.retryAfterSeconds} seconds.`,
+          429,
+        );
+      }
+
       const body = (await request.json()) as BookAppointmentInput;
 
-      await BookingService.bookAppointment(body);
+      await BookingService.bookAppointment(authUser, body);
 
       return NextResponse.json(
         {
@@ -63,19 +71,21 @@ export class BookingController {
           success: false,
           error: getErrorMessage(error),
         },
-        { status: 400 },
+        { status: getStatusCode(error) },
       );
     }
   }
 
   static async cancelAppointment(request: NextRequest) {
     try {
+      const authUser = await requireAuth(request);
       const body = (await request.json()) as {
         appointmentId?: string;
         reason?: string;
       };
 
       await BookingService.cancelAppointment(
+        authUser,
         body.appointmentId ?? "",
         body.reason ?? "",
       );
@@ -92,16 +102,17 @@ export class BookingController {
           success: false,
           error: getErrorMessage(error),
         },
-        { status: 400 },
+        { status: getStatusCode(error) },
       );
     }
   }
 
   static async submitRating(request: NextRequest) {
     try {
+      const authUser = await requireAuth(request);
       const body = (await request.json()) as SubmitRatingInput;
 
-      await BookingService.submitRating(body);
+      await BookingService.submitRating(authUser, body);
 
       return NextResponse.json(
         {
@@ -118,7 +129,7 @@ export class BookingController {
           success: false,
           error: getErrorMessage(error),
         },
-        { status: 400 },
+        { status: getStatusCode(error) },
       );
     }
   }

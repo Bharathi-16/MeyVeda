@@ -7,10 +7,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
+import { getNavContext, setNavContext } from "@/lib/nav-context-client";
 
 type DeviceCheckId =
   | "mic"
@@ -123,9 +124,20 @@ function getStatusDotClass(
 
 function WaitingRoomContent() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const appointmentId =
-  searchParams.get("appointmentId") ?? "";
+
+  const [navContext, setLocalNavContext] = useState<{ appointmentId: string } | null | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    getNavContext<{ appointmentId: string }>("video").then((result) => {
+      if (!cancelled) setLocalNavContext(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const appointmentId = navContext?.appointmentId ?? "";
 
   const { user } = useAuth();
 
@@ -333,6 +345,11 @@ function WaitingRoomContent() {
     };
   }, []);
 useEffect(() => {
+  if (navContext === undefined) {
+    // Still waiting on the server-side navigation context.
+    return;
+  }
+
   if (!appointmentId) {
     setPageError(
       "Appointment ID is missing. Open the waiting room from your appointment.",
@@ -406,7 +423,7 @@ useEffect(() => {
   return () => {
     cancelled = true;
   };
-}, [appointmentId]);
+}, [appointmentId, navContext]);
 
   useEffect(() => {
     if (
@@ -477,7 +494,7 @@ useEffect(() => {
      */
   }
 
-  function handleJoinConsultation() {
+  async function handleJoinConsultation() {
     if (!session || joining) {
       return;
     }
@@ -485,11 +502,8 @@ useEffect(() => {
     setJoining(true);
     stopMediaPreview();
 
-    router.push(
-      `/consult?appointmentId=${encodeURIComponent(
-        session.appointmentId,
-      )}`,
-    );
+    await setNavContext("video", { appointmentId: session.appointmentId });
+    router.push("/consult");
   }
 
   if (pageError) {

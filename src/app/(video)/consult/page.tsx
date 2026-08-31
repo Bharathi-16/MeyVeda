@@ -10,8 +10,8 @@ import {
 import dynamic from "next/dynamic";
 import {
   useRouter,
-  useSearchParams,
 } from "next/navigation";
+import { getNavContext } from "@/lib/nav-context-client";
 
 /* -------------------------------------------------------------------------- */
 /*                                   Types                                    */
@@ -121,10 +121,20 @@ function getErrorMessage(
 
 function ConsultationContent() {
   const router = useRouter();
-  const searchParams = useSearchParams();
 
-  const appointmentId =
-  searchParams.get("appointmentId") ?? "";
+  const [navContext, setNavContextState] = useState<{ appointmentId: string } | null | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    getNavContext<{ appointmentId: string }>("video").then((result) => {
+      if (!cancelled) setNavContextState(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const appointmentId = navContext?.appointmentId ?? "";
 
   const endedRef = useRef(false);
 
@@ -145,6 +155,11 @@ function ConsultationContent() {
   /* ------------------------------------------------------------------------ */
 
   useEffect(() => {
+    if (navContext === undefined) {
+      // Still waiting on the server-side navigation context.
+      return;
+    }
+
     if (!appointmentId) {
       setError(
         "Appointment ID is missing. Open the consultation from your appointments page.",
@@ -226,7 +241,7 @@ function ConsultationContent() {
     return () => {
       cancelled = true;
     };
-  }, [appointmentId]);
+  }, [appointmentId, navContext]);
 
   /* ------------------------------------------------------------------------ */
   /*                       Update video-call status                           */
