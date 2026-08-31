@@ -40,7 +40,6 @@ export class OnboardingService {
 
   static async savePatientProfile(input: SavePatientProfileInput): Promise<string> {
     if (!input.fullName?.trim()) throw new Error("Full name is required");
-    if (!input.dateOfBirth) throw new Error("Date of birth is required");
     return OnboardingRepository.savePatientProfile(input);
   }
 

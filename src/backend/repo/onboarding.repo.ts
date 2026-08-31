@@ -1,4 +1,3 @@
-
 import { createClient } from "@/shared/db/supabase.server";
 import { resolveActiveFeeRupees } from "@/lib/fee";
 
@@ -119,7 +118,10 @@ export class OnboardingRepository {
       city: p.city || null,
       clinic_hospital_name: p.clinicName || null,
       clinic_hospital_address: p.clinicAddress || null,
-      experience_years: p.experienceYears ?? null,
+      // experience_years is NOT NULL in the practitioners table. The quick
+      // onboarding flow only collects name + phone, so default to 0 here —
+      // Profile → Create Profile fills in the real figure afterwards.
+      experience_years: p.experienceYears ?? 0,
       specializations: p.specializations || [],
       disciplines: ["Ayurveda"],
       languages: p.languages || [],

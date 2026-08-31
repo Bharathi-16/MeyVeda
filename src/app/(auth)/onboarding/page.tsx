@@ -239,7 +239,7 @@ export default function OnboardingPage() {
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to create patient account.");
+      if (!res.ok) throw new Error(data.message || data.error || "Failed to create patient account.");
 
       login({ id: data.data?.userId || "", phone: phone || "", role: "patient", name: fullName, abhaLinked: false, email });
       toast.success("Account created successfully!");
