@@ -6,6 +6,9 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import { toast } from "react-hot-toast";
 import { Shield, AlertCircle, Stethoscope, HeartPulse, Check, UserCog } from "lucide-react";
+import PhoneInput from "react-phone-number-input";
+import "react-phone-number-input/style.css";
+import type { E164Number } from "libphonenumber-js/core";
 
 type Step =
   | "welcome"
@@ -557,13 +560,19 @@ export default function OnboardingPage() {
                 <label className="text-xs font-semibold text-foreground block mb-1">
                   Phone Number <span className="text-red-500">*</span>
                 </label>
-                <input
-                  type="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="10-digit mobile"
-                  className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white"
+
+                <PhoneInput
+                  international
+                  defaultCountry="IN"
+                  value={phone as E164Number | undefined}
+                  onChange={(value) => setPhone(value || "")}
+                  placeholder="Enter phone number"
+                  className="w-full px-4 py-2.5 border border-border rounded-xl text-sm bg-white focus-within:border-herb-green/50"
                 />
+
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Include your country code
+                </p>
               </div>
             </div>
 
