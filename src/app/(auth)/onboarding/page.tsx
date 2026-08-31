@@ -6,8 +6,9 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import { toast } from "react-hot-toast";
 import { Shield, AlertCircle, Stethoscope, HeartPulse, Check, UserCog } from "lucide-react";
-import PhoneInput from "react-phone-number-input";
+import PhoneInput from "react-phone-number-input/max";
 import "react-phone-number-input/style.css";
+import { isValidPhoneNumber } from "react-phone-number-input/max";
 import type { E164Number } from "libphonenumber-js/core";
 
 type Step =
@@ -544,35 +545,47 @@ export default function OnboardingPage() {
             <p className="text-sm text-muted-foreground mb-6">Tell us a bit about yourself</p>
             
             <div className="space-y-4 mb-6">
-              <div>
-                <label className="text-xs font-semibold text-foreground block mb-1">
-                  Full Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  placeholder="Enter your full name"
-                  className="w-full px-4 py-2.5 border border-border rounded-xl text-sm focus:outline-none focus:border-herb-green/50 bg-white"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-foreground block mb-1">
+             <div>
+              <label className="text-xs font-semibold text-foreground block mb-1">
+                Full Name <span className="text-red-500">*</span>
+              </label>
+
+              <input
+                type="text"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Enter your full name"
+                className="w-[570px] h-10 px-3 border border-border rounded-lg text-sm focus:outline-none focus:border-herb-green/50 bg-white"
+              />
+            </div>
+              <div className="w-full max-w-xl">
+                <label className="text-xs font-semibold text-foreground block mb-1.5">
                   Phone Number <span className="text-red-500">*</span>
                 </label>
 
-                <PhoneInput
-                  international
-                  defaultCountry="IN"
-                  value={phone as E164Number | undefined}
-                  onChange={(value) => setPhone(value || "")}
-                  placeholder="Enter phone number"
-                  className="w-full px-4 py-2.5 border border-border rounded-xl text-sm bg-white focus-within:border-herb-green/50"
-                />
+                <div className="phone-wrapper">
+                  <PhoneInput
+                    international
+                    defaultCountry="IN"
+                    limitMaxLength
+                    value={phone as E164Number | undefined}
+                    onChange={(value) => setPhone(value || "")}
+                    placeholder="Enter phone number"
+                    type="tel"
+                    autoComplete="tel"
+                    className="phone-input"
+                  />
+                </div>
 
-                <p className="text-[11px] text-muted-foreground mt-1">
-                  Include your country code
+                <p className="text-[11px] text-muted-foreground mt-1.5">
+                  Select your country and enter your phone number
                 </p>
+
+                {phone && !isValidPhoneNumber(phone) && (
+                  <p className="text-[11px] text-red-500 mt-1">
+                    Please enter a valid phone number
+                  </p>
+                )}
               </div>
             </div>
 

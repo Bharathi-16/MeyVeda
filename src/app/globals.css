@@ -231,3 +231,80 @@
     background: oklch(0.44 0.22 268);
   }
 }
+
+/* ─── International Phone Input ───────────────────────────── */
+
+@layer components {
+  .phone-wrapper {
+    width: 100%;
+    height: 44px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .phone-wrapper:focus-within {
+    border-color: color-mix(in oklch, var(--herb-green) 50%, transparent);
+    box-shadow: 0 0 0 2px color-mix(
+      in oklch,
+      var(--herb-green) 8%,
+      transparent
+    );
+  }
+
+  .phone-input {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* Country selector */
+  .phone-input .PhoneInputCountry {
+    margin: 0;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .phone-input .PhoneInputCountrySelect {
+    cursor: pointer;
+    border: 0;
+    outline: 0;
+  }
+
+  /* Flag */
+  .phone-input .PhoneInputCountryIcon {
+    width: 23px;
+    height: 17px;
+  }
+
+  /* Dropdown arrow */
+  .phone-input .PhoneInputCountrySelectArrow {
+    margin-left: 1px;
+  }
+
+  /* Phone number */
+  .phone-input .PhoneInputInput {
+    min-width: 0;
+    width: 100%;
+    height: 38px;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 14px;
+    line-height: 1;
+    color: var(--foreground);
+    padding: 0;
+  }
+
+  .phone-input .PhoneInputInput::placeholder {
+    color: #9ca3af;
+  }
+}
