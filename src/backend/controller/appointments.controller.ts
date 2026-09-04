@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import {
   AppointmentsService,
   createAppointmentSchema,
+  createFollowUpAppointmentSchema,
   cancelAppointmentSchema,
   videoAppointmentIdParamSchema,
   updateVideoStatusSchema,
@@ -95,6 +96,72 @@ export async function createAppointmentController(
   return apiSuccess(
     result,
     "Appointment scheduled successfully",
+    201,
+  );
+}
+
+/**
+ * POST /api/appointments?action=book-follow-up
+ *
+ * A practitioner books a follow-up appointment on behalf of a patient
+ * they're treating.
+ */
+export async function createFollowUpAppointmentController(
+  req: NextRequest,
+) {
+  const auth = await requireAuth(req);
+
+  /*
+   * The caller here is the practitioner (or admin), not the patient, so
+   * this checks APPOINTMENTS_UPDATE — the permission practitioners
+   * actually hold — rather than APPOINTMENTS_CREATE, which is scoped to a
+   * patient booking their own appointment. Ownership of the specific
+   * slot/patient is still enforced in the service layer.
+   */
+  requirePermission(
+    auth,
+    PERMISSIONS.APPOINTMENTS_UPDATE,
+  );
+
+  const body: unknown = await req.json();
+
+  const parsed =
+    createFollowUpAppointmentSchema.safeParse(body);
+
+  if (!parsed.success) {
+    throw new ValidationError(
+      "Follow-up appointment validation failed",
+      parsed.error.format(),
+    );
+  }
+
+  const result =
+    await AppointmentsService.createFollowUpAppointment(
+      auth,
+      parsed.data.patientId,
+      parsed.data.slotId,
+      parsed.data.mode,
+      parsed.data.reasonForVisit,
+    );
+
+  await writeAuditLog({
+    userId: auth.id,
+    role: auth.role,
+    action: "book_follow_up_appointment",
+    module: "appointments",
+    recordId: result.id,
+    ipAddress: getRequestIp(req),
+    userAgent: getRequestUserAgent(req),
+    metadata: {
+      patientId: parsed.data.patientId,
+      slotId: parsed.data.slotId,
+      mode: parsed.data.mode,
+    },
+  });
+
+  return apiSuccess(
+    result,
+    "Follow-up appointment scheduled successfully",
     201,
   );
 }

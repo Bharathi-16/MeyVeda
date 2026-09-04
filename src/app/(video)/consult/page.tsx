@@ -47,6 +47,7 @@ type JitsiSession = {
   scheduledDate: string;
   scheduledTime: string;
   videoStatus: AppointmentVideoStatus;
+  jwt?: string;
 };
 
 type JitsiExternalApi = {
@@ -137,6 +138,8 @@ function ConsultationContent() {
   const appointmentId = navContext?.appointmentId ?? "";
 
   const endedRef = useRef(false);
+
+  const apiRef = useRef<JitsiExternalApi | null>(null);
 
   const [session, setSession] =
     useState<JitsiSession | null>(null);
@@ -329,7 +332,15 @@ function ConsultationContent() {
           statusError,
         );
       } finally {
-        router.replace("/appointments");
+        // Practitioners return to dashboard; patients go to appointments.
+        if (
+          session &&
+          isPractitionerOrAdmin(session.participantRole)
+        ) {
+          router.replace("/pro");
+        } else {
+          router.replace("/appointments");
+        }
       }
     }, [
       router,
@@ -343,6 +354,8 @@ function ConsultationContent() {
 
   const handleApiReady = useCallback(
     (api: JitsiExternalApi): void => {
+      apiRef.current = api;
+
       setMeetingReady(true);
 
       api.executeCommand?.(
@@ -408,6 +421,69 @@ function ConsultationContent() {
       updateVideoStatus,
     ],
   );
+
+  /* ------------------------------------------------------------------------ */
+  /*         Detect the other participant ending the call remotely           */
+  /* ------------------------------------------------------------------------ */
+
+  useEffect(() => {
+    if (!meetingReady || !appointmentId || endedRef.current) {
+      return;
+    }
+
+    const intervalId = setInterval(async () => {
+      if (endedRef.current) {
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          `/api/appointments?action=video-session&appointmentId=${encodeURIComponent(
+            appointmentId,
+          )}`,
+          {
+            method: "POST",
+            credentials: "include",
+            cache: "no-store",
+          },
+        );
+
+        const payload: unknown = await response
+          .json()
+          .catch(() => null);
+
+        const parsed = payload as {
+          data?: { videoStatus?: string };
+          message?: string;
+        } | null;
+
+        // A live status still comes back as data.videoStatus. But once the
+        // consultation has ended/cancelled, this same endpoint stops
+        // returning a session and starts erroring instead — so that error
+        // is itself the remote-end signal to catch here.
+        const status =
+          parsed?.data?.videoStatus ??
+          (!response.ok &&
+          /already ended|been cancelled/i.test(parsed?.message ?? "")
+            ? /cancelled/i.test(parsed?.message ?? "")
+              ? "cancelled"
+              : "ended"
+            : undefined);
+
+        if (
+          (status === "ended" || status === "cancelled") &&
+          !endedRef.current
+        ) {
+          apiRef.current?.executeCommand?.("hangup");
+          void finishConsultation();
+        }
+      } catch {
+        // Transient network error — try again on the next tick.
+      }
+    }, 5000);
+
+    return () => clearInterval(intervalId);
+  }, [meetingReady, appointmentId, finishConsultation]);
 
   /* ------------------------------------------------------------------------ */
   /*                              Loading state                               */
@@ -520,11 +596,13 @@ function ConsultationContent() {
         <JitsiMeeting
   domain={session.domain}
   roomName={session.roomName}
+  jwt={session.jwt}
   userInfo={{
     displayName: session.displayName || "MeyVeda User",
     email: session.email?.trim() || "",
   }}
   configOverwrite={{
+    subject: "MeyVeda Video Consultation",
     startWithAudioMuted: false,
     startWithVideoMuted: false,
     prejoinPageEnabled: false,

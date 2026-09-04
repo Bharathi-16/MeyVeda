@@ -89,9 +89,9 @@ export class NotificationRepository {
 
       const { error: notifError } = await supabase.from("notifications").insert({
         user_id: patientUserId,
+        channel: "in_app",
         title: "Appointment Missed",
         body: `Your appointment with ${practitionerName} on ${formattedDate} at ${apptTime} was missed. You can book another appointment if you would like to continue your consultation.`,
-        type: "missed_appointment",
         is_read: false,
       });
 
@@ -107,6 +107,35 @@ export class NotificationRepository {
           time: apptTime,
         });
       }
+    }
+  }
+
+  /**
+   * Notify a practitioner that a patient has just entered the video
+   * waiting room for one of their appointments, with a deep link they can
+   * click straight into the same room.
+   */
+  static async notifyPatientWaitingForVideo(params: {
+    practitionerUserId: string;
+    patientName: string;
+    appointmentId: string;
+  }): Promise<void> {
+    const supabase = await createClient();
+
+    const { error } = await supabase.from("notifications").insert({
+      user_id: params.practitionerUserId,
+      channel: "in_app",
+      title: "Patient is waiting",
+      body: `${params.patientName} is waiting in the video consultation room.`,
+      is_read: false,
+      deep_link: `/waiting-room?appointmentId=${params.appointmentId}`,
+    });
+
+    if (error) {
+      console.error(
+        "[NotificationRepository] Error inserting patient-waiting notification:",
+        error.message,
+      );
     }
   }
 

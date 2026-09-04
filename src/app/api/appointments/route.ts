@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import {
   getAppointmentsController,
   createAppointmentController,
+  createFollowUpAppointmentController,
   cancelAppointmentController,
   getOrCreateVideoSessionController,
   updateVideoSessionStatusController,
@@ -31,6 +32,10 @@ export const POST = withErrorHandler(
         req,
         appointmentId,
       );
+    }
+
+    if (action === "book-follow-up") {
+      return createFollowUpAppointmentController(req);
     }
 
     return createAppointmentController(req);

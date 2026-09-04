@@ -1,6 +1,6 @@
 import "server-only";
 
-import { randomUUID } from "crypto";
+import { randomUUID, createHmac } from "crypto";
 import { z } from "zod";
 
 import {
@@ -10,6 +10,7 @@ import {
   type AppointmentVideoStatus,
 } from "../repo/appointments.repo";
 import { EmailService } from "./email.service";
+import { NotificationRepository } from "../repo/notification.repo";
 
 import type { AuthUser } from "@/shared/auth/auth.types";
 import { resolveActingPractitionerUserId } from "@/shared/auth/resolve-practitioner-context";
@@ -63,6 +64,12 @@ export type JitsiVideoSession = {
   scheduledDate: string;
   scheduledTime: string;
   videoStatus: AppointmentVideoStatus;
+  jwt?: string;
+
+  /** The name/specialty of the *other* participant, for waiting-room display. */
+  otherPartyName: string;
+  otherPartyInitials: string;
+  otherPartySpecialty?: string;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -79,6 +86,20 @@ export const createAppointmentSchema = z.object({
     .optional(),
 
   mode: z.enum(["video", "clinic"]),
+});
+
+export const createFollowUpAppointmentSchema = z.object({
+  patientId: z.string().uuid("Invalid patient ID format"),
+
+  slotId: z.string().uuid("Invalid slot ID format"),
+
+  mode: z.enum(["video", "clinic"]),
+
+  reasonForVisit: z
+    .string()
+    .trim()
+    .max(1000, "Reason description is too long")
+    .optional(),
 });
 
 export const cancelAppointmentSchema = z.object({
@@ -127,6 +148,10 @@ export type CreateAppointmentInput = z.infer<
 
 export type CancelAppointmentInput = z.infer<
   typeof cancelAppointmentSchema
+>;
+
+export type CreateFollowUpAppointmentInput = z.infer<
+  typeof createFollowUpAppointmentSchema
 >;
 
 export type UpdateVideoStatusInput = z.infer<
@@ -182,6 +207,141 @@ function getAuthUserDisplayName(authUser: AuthUser): string {
   }
 
   return "MeyVeda User";
+}
+
+function initialsFrom(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0))
+    .join("")
+    .slice(0, 2)
+    .toUpperCase() || "MV";
+}
+
+/**
+ * Resolve the display name/specialty/initials of the *other* participant
+ * on a video appointment, for whichever side (patient or practitioner)
+ * is currently requesting the session.
+ */
+function resolveOtherParty(
+  appointment: AppointmentVideoRow,
+  requestingRole: "patient" | "practitioner" | "admin",
+): {
+  name: string;
+  initials: string;
+  specialty?: string;
+} {
+  if (requestingRole === "practitioner") {
+    const patient = getFirst(appointment.patient);
+    const name = patient?.full_name?.trim() || "Patient";
+
+    return { name, initials: initialsFrom(name) };
+  }
+
+  const practitioner = getFirst(appointment.practitioner);
+  const name = practitioner?.full_name?.trim() || "Your Practitioner";
+
+  const specialty = [
+    ...(practitioner?.specializations ?? []),
+    ...(practitioner?.disciplines ?? []),
+  ][0];
+
+  return { name, initials: initialsFrom(name), specialty };
+}
+
+/**
+ * How early either side may join the video room, relative to the
+ * scheduled start time.
+ */
+const JOIN_WINDOW_MINUTES_BEFORE = 15;
+
+function assertWithinJoinWindow(
+  appointment: AppointmentVideoRow,
+): void {
+  // Once the call has actually started, always allow rejoining
+  // regardless of the clock (network drops, tab refreshes, etc.).
+  if (
+    appointment.video_status === "in_progress" ||
+    appointment.video_status === "waiting"
+  ) {
+    return;
+  }
+
+  const scheduledStart = new Date(
+    `${appointment.scheduled_date}T${appointment.scheduled_time || "00:00:00"}`,
+  ).getTime();
+
+  if (Number.isNaN(scheduledStart)) {
+    return;
+  }
+
+  const earliestJoin =
+    scheduledStart - JOIN_WINDOW_MINUTES_BEFORE * 60_000;
+
+  if (Date.now() < earliestJoin) {
+    throw new AppError(
+      `This video consultation opens ${JOIN_WINDOW_MINUTES_BEFORE} minutes before the scheduled time`,
+      403,
+    );
+  }
+}
+
+/**
+ * Sign a Jitsi-compatible JWT (HS256) when self-hosted-Jitsi credentials
+ * are configured. Returns undefined for the default public meet.jit.si
+ * setup, which has no JWT auth to satisfy.
+ */
+function signJitsiJwt(params: {
+  appId: string;
+  appSecret: string;
+  roomName: string;
+  userId: string;
+  displayName: string;
+  email?: string;
+  isModerator: boolean;
+}): string {
+  const base64url = (input: Buffer | string): string =>
+    Buffer.from(input)
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+
+  const header = { alg: "HS256", typ: "JWT" };
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+
+  const payload = {
+    aud: "jitsi",
+    iss: params.appId,
+    sub: params.appId,
+    room: params.roomName,
+    iat: nowSeconds,
+    nbf: nowSeconds - 10,
+    // Valid for 4 hours — comfortably covers a consultation plus buffer.
+    exp: nowSeconds + 4 * 60 * 60,
+    context: {
+      user: {
+        id: params.userId,
+        name: params.displayName,
+        email: params.email || "",
+        moderator: params.isModerator,
+      },
+    },
+  };
+
+  const encodedHeader = base64url(JSON.stringify(header));
+  const encodedPayload = base64url(JSON.stringify(payload));
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+
+  const signature = base64url(
+    createHmac("sha256", params.appSecret)
+      .update(signingInput)
+      .digest(),
+  );
+
+  return `${signingInput}.${signature}`;
 }
 
 function normalizeJitsiDomain(domain?: string): string {
@@ -351,6 +511,86 @@ export class AppointmentsService {
     return {
       id: appointment.id,
     };
+  }
+
+  /**
+   * A practitioner books a follow-up appointment on behalf of a specific
+   * patient they're currently treating (e.g. "fix a follow-up slot" from
+   * the patient consult screen). Unlike createAppointment, the patient is
+   * supplied explicitly rather than resolved from the caller's own auth.
+   */
+  static async createFollowUpAppointment(
+    authUser: AuthUser,
+    patientId: string,
+    slotId: string,
+    mode: AppointmentMode,
+    reasonForVisit?: string,
+  ): Promise<{ id: string }> {
+    if (!isPractitionerRole(authUser) && !isAdminRole(authUser)) {
+      throw new AppError(
+        "Only a practitioner can schedule a follow-up appointment",
+        403,
+      );
+    }
+
+    const patientExists =
+      await AppointmentsRepository.patientExists(patientId);
+
+    if (!patientExists) {
+      throw new AppError("Patient not found", 404);
+    }
+
+    if (!isAdminRole(authUser)) {
+      const practitionerId =
+        await AppointmentsRepository.getPractitionerIdFromUserId(
+          await resolveActingPractitionerUserId(authUser),
+        );
+
+      const slotPractitionerId =
+        await AppointmentsRepository.getSlotPractitionerId(
+          slotId,
+        );
+
+      if (
+        !practitionerId ||
+        !slotPractitionerId ||
+        slotPractitionerId !== practitionerId
+      ) {
+        throw new AppError(
+          "You can only book follow-up slots from your own availability",
+          403,
+        );
+      }
+    }
+
+    const appointment =
+      await AppointmentsRepository.createAppointment(
+        patientId,
+        slotId,
+        mode,
+        reasonForVisit,
+      );
+
+    const emailDetails =
+      await AppointmentsRepository.getAppointmentEmailDetails(
+        appointment.id,
+      );
+
+    if (emailDetails) {
+      await EmailService.sendAppointmentBooked(
+        emailDetails.patientEmail,
+        {
+          patientName: emailDetails.patientName,
+          practitionerName: emailDetails.practitionerName,
+          date: formatDisplayDate(emailDetails.scheduledDate),
+          time: formatTime(emailDetails.scheduledTime),
+          mode: emailDetails.mode === "clinic" ? "clinic" : "video",
+          fee: formatFee(emailDetails.feePaise),
+        },
+      );
+    }
+
+    return { id: appointment.id };
   }
 
   /**
@@ -583,6 +823,18 @@ export class AppointmentsService {
       );
     }
 
+    assertWithinJoinWindow(appointment);
+
+    const requestingRole = isAdminRole(authUser)
+      ? "admin"
+      : isPatientRole(authUser)
+        ? "patient"
+        : "practitioner";
+
+    const isFirstArrival =
+      !appointment.video_room_name ||
+      appointment.video_status === "not_started";
+
     if (!appointment.video_room_name) {
       const generatedRoomName = [
         "meyveda",
@@ -611,6 +863,49 @@ export class AppointmentsService {
       );
     }
 
+    const otherParty = resolveOtherParty(
+      appointment,
+      requestingRole,
+    );
+
+    const displayName = getAuthUserDisplayName(authUser);
+
+    // Let the practitioner know their patient has just shown up, so they
+    // don't have to keep the dashboard open to notice.
+    if (isFirstArrival && requestingRole === "patient") {
+      const practitioner = getFirst(appointment.practitioner);
+
+      if (practitioner?.user_id) {
+        await NotificationRepository.notifyPatientWaitingForVideo({
+          practitionerUserId: practitioner.user_id,
+          patientName: displayName,
+          appointmentId: appointment.id,
+        }).catch((notifyError) => {
+          console.error(
+            "[AppointmentsService] Unable to notify practitioner of waiting patient:",
+            notifyError,
+          );
+        });
+      }
+    }
+
+    const jitsiAppId = process.env.JITSI_JWT_APP_ID;
+    const jitsiAppSecret = process.env.JITSI_JWT_APP_SECRET;
+
+    const jwt =
+      jitsiAppId && jitsiAppSecret
+        ? signJitsiJwt({
+            appId: jitsiAppId,
+            appSecret: jitsiAppSecret,
+            roomName: appointment.video_room_name,
+            userId: authUser.id,
+            displayName,
+            isModerator:
+              requestingRole === "practitioner" ||
+              requestingRole === "admin",
+          })
+        : undefined;
+
     return {
       appointmentId: appointment.id,
       provider: "jitsi",
@@ -618,11 +913,15 @@ export class AppointmentsService {
         process.env.JITSI_DOMAIN,
       ),
       roomName: appointment.video_room_name,
-      displayName: getAuthUserDisplayName(authUser),
+      displayName,
       participantRole: getRole(authUser),
       scheduledDate: appointment.scheduled_date,
       scheduledTime: appointment.scheduled_time,
       videoStatus: appointment.video_status,
+      jwt,
+      otherPartyName: otherParty.name,
+      otherPartyInitials: otherParty.initials,
+      otherPartySpecialty: otherParty.specialty,
     };
   }
 

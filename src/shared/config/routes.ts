@@ -12,8 +12,6 @@ export const PATIENT_ROUTES = [
   "/prescription",
   "/consent",
   "/orders",
-  "/consult",
-  "/waiting-room",
   "/post-consult",
   "/appointments",
   "/dinacharya",
@@ -24,4 +22,8 @@ export const SHARED_AUTHENTICATED_ROUTES = [
   "/ai-chat",
   "/notifications",
   "/messages",
+  // Both the patient and the practitioner join the same video
+  // consultation, so these can't be gated to a single role.
+  "/consult",
+  "/waiting-room",
 ];

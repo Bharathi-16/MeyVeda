@@ -75,16 +75,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { toast } from "react-hot-toast";
 import { ENABLE_VIDEO_CONSULTATION } from "@/lib/feature-flags";
 
-type Step = "configure" | "payment" | "confirmed";
-
-const PAYMENT_METHODS = [
-  { id: "gpay", label: "Google Pay", icon: "🟢" },
-  { id: "phonepe", label: "PhonePe", icon: "🟣" },
-  { id: "paytm", label: "Paytm", icon: "🔵" },
-  { id: "upi", label: "UPI ID", icon: "🏦" },
-  { id: "card", label: "Debit / Credit Card", icon: "💳" },
-  { id: "netbank", label: "Net Banking", icon: "🏛️" },
-];
+type Step = "configure" | "confirmed";
 
 function BookingContent() {
   const router = useRouter();
@@ -131,7 +122,6 @@ function BookingContent() {
   const [selectedPatient, setSelectedPatient] = useState("self");
   const [selectedFamilyMemberId, setSelectedFamilyMemberId] = useState<string | null>(null);
   const [reason, setReason] = useState("");
-  const [selectedPayment, setSelectedPayment] = useState("gpay");
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Automatically select the first family member if available
@@ -177,7 +167,7 @@ function BookingContent() {
       ? doctor.specialties.join(" · ")
       : doctor.specialty;
 
-  async function handlePayNow() {
+  async function handleBookNow() {
     if (!user?.id || !doctor) {
       toast.error("Please sign in before booking");
       return;
@@ -265,7 +255,6 @@ function BookingContent() {
             ...(ENABLE_VIDEO_CONSULTATION
               ? [["Mode", consultMode === "video" ? "📹 Video Consultation" : "🏥 In-Clinic"]]
               : []),
-            ...(ENABLE_VIDEO_CONSULTATION ? [["Amount Paid", formatCurrency(total)]] : []),
           ].map(([label, value]) => (
             <div key={label} className="flex justify-between text-sm">
               <span className="text-muted-foreground">{label}</span>
@@ -313,15 +302,14 @@ function BookingContent() {
       {/* Progress */}
       <div className="flex items-center gap-3 mb-6">
         {[
-          { id: "configure", label: "Configure" },
-          ...(ENABLE_VIDEO_CONSULTATION ? [{ id: "payment", label: "Payment" }] : []),
+          { id: "configure", label: "Configure" }
         ].map((s, i) => (
           <div key={s.id} className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <div
                 className={cn(
                   "w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold",
-                  step === s.id || (s.id === "configure" && step === "payment")
+                  step === s.id
                     ? "bg-herb-green text-white"
                     : "bg-muted text-muted-foreground"
                 )}
@@ -332,7 +320,6 @@ function BookingContent() {
                 {s.label}
               </span>
             </div>
-            {i === 0 && <div className="w-8 h-0.5 bg-border" />}
           </div>
         ))}
       </div>
@@ -511,13 +498,7 @@ function BookingContent() {
                     return;
                   }
 
-                  if (ENABLE_VIDEO_CONSULTATION) {
-                    setStep("payment");
-                  } else {
-                    // Phase 1: payment is collected in-clinic, so booking
-                    // confirms directly instead of routing through payment.
-                    handlePayNow();
-                  }
+                  handleBookNow();
                 }}
                 disabled={
                   isProcessing ||
@@ -527,53 +508,8 @@ function BookingContent() {
                 }
                 className="w-full py-3 bg-herb-green text-white rounded-xl text-sm font-semibold hover:bg-herb-green/90 transition-all active:scale-95 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {ENABLE_VIDEO_CONSULTATION
-                  ? "Continue to Payment"
-                  : isProcessing
-                    ? "Booking…"
-                    : "Book Appointment"}
+                {isProcessing ? "Booking…" : "Book Appointment"}
               </button>
-            </>
-          )}
-
-          {ENABLE_VIDEO_CONSULTATION && step === "payment" && (
-            <>
-              <div className="bg-white rounded-2xl border border-border p-5">
-                <h3 className="font-semibold text-foreground text-sm mb-4">Select Payment Method</h3>
-                <div className="grid grid-cols-2 gap-2">
-                  {PAYMENT_METHODS.map((m) => (
-                    <button
-                      key={m.id}
-                      onClick={() => setSelectedPayment(m.id)}
-                      className={cn(
-                        "flex items-center gap-2 p-3 rounded-xl border text-sm transition-all text-left",
-                        selectedPayment === m.id
-                          ? "border-herb-green bg-herb-green/5"
-                          : "border-border hover:border-herb-green/30"
-                      )}
-                    >
-                      <span className="text-xl flex-shrink-0">{m.icon}</span>
-                      <span className="text-xs font-medium text-foreground">{m.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setStep("configure")}
-                  className="px-6 py-3 border border-border text-sm font-medium rounded-xl hover:bg-muted transition-colors"
-                >
-                  Back
-                </button>
-                <button
-                  onClick={handlePayNow}
-                  disabled={isProcessing}
-                  className="flex-1 py-3 bg-herb-green text-white rounded-xl text-sm font-semibold hover:bg-herb-green/90 transition-all active:scale-95 shadow-sm disabled:opacity-70"
-                >
-                  {isProcessing ? "Processing…" : `Pay ${formatCurrency(total)}`}
-                </button>
-              </div>
             </>
           )}
         </div>

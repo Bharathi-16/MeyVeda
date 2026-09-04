@@ -671,18 +671,34 @@ export default function ProDashboardPage() {
                                             Consult
                                           </span>
                                         ) : (
-                                          <button
-                                            onClick={async () => {
-                                              await setNavContext("patient", {
-                                                patientId: patient.id,
-                                                appointmentId: patient.appointmentId,
-                                              });
-                                              router.push("/pro/patient");
-                                            }}
-                                            className="inline-flex items-center justify-center rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
-                                          >
-                                            Consult
-                                          </button>
+                                          <div className="flex items-center gap-2">
+                                            {patient.mode === "video" && (
+                                              <button
+                                                onClick={async () => {
+                                                  await setNavContext("video", {
+                                                    appointmentId: patient.appointmentId,
+                                                  });
+                                                  router.push("/waiting-room");
+                                                }}
+                                                className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 shadow-sm"
+                                              >
+                                                <Video className="w-3.5 h-3.5" />
+                                                Start Video
+                                              </button>
+                                            )}
+                                            <button
+                                              onClick={async () => {
+                                                await setNavContext("patient", {
+                                                  patientId: patient.id,
+                                                  appointmentId: patient.appointmentId,
+                                                });
+                                                router.push("/pro/patient");
+                                              }}
+                                              className="inline-flex items-center justify-center rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+                                            >
+                                              Consult
+                                            </button>
+                                          </div>
                                         )}
 
                                       </div>

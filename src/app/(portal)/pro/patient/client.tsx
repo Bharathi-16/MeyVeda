@@ -9,6 +9,7 @@ import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@/hooks/useQuery";
 import { apiClient } from "@/shared/api/api-client";
+import { toast } from "react-hot-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { getNavContext, setNavContext } from "@/lib/nav-context-client";
 import { createClient } from "@/lib/supabase/client";
@@ -342,6 +343,9 @@ export default function PatientIntakeClient() {
   const [followUpInstructions, setFollowUpInstructions] = useState("");
   const [upcomingCallDate, setUpcomingCallDate] = useState("");
   const [upcomingCallTime, setUpcomingCallTime] = useState("");
+  const [upcomingCallSlotId, setUpcomingCallSlotId] = useState("");
+  const [followUpAppointmentId, setFollowUpAppointmentId] = useState("");
+  const [isBookingFollowUp, setIsBookingFollowUp] = useState(false);
   const [isCallFixed, setIsCallFixed] = useState(false);
   const [isUpcomingVisible, setIsUpcomingVisible] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "online">("cash");
@@ -1123,11 +1127,58 @@ export default function PatientIntakeClient() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
+                      {followUpAppointmentId ? (
+                        <span className="px-4 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-bold flex items-center gap-1.5">
+                          ✓ Scheduled
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={isBookingFollowUp || !upcomingCallSlotId}
+                          onClick={async () => {
+                            if (!upcomingCallSlotId || !id) return;
+
+                            setIsBookingFollowUp(true);
+
+                            try {
+                              const response = await apiClient<{ data: { id: string } }>(
+                                "/api/appointments?action=book-follow-up",
+                                {
+                                  method: "POST",
+                                  body: JSON.stringify({
+                                    patientId: id,
+                                    slotId: upcomingCallSlotId,
+                                    mode: upcomingCallMode,
+                                    reasonForVisit: followUpInstructions || undefined,
+                                  }),
+                                },
+                              );
+
+                              setFollowUpAppointmentId(response.data.id);
+                              toast.success("Follow-up appointment scheduled");
+                            } catch (bookingError) {
+                              toast.error(
+                                bookingError instanceof Error
+                                  ? bookingError.message
+                                  : "Unable to schedule the follow-up appointment",
+                              );
+                            } finally {
+                              setIsBookingFollowUp(false);
+                            }
+                          }}
+                          className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                        >
+                          <Calendar className="w-3.5 h-3.5" />
+                          {isBookingFollowUp ? "Scheduling…" : "Schedule Follow-up"}
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => {
                           setUpcomingCallDate("");
                           setUpcomingCallTime("");
+                          setUpcomingCallSlotId("");
+                          setFollowUpAppointmentId("");
                           setShowCalendarPanel(false);
                         }}
                         className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-lg text-xs font-bold transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
@@ -1135,13 +1186,15 @@ export default function PatientIntakeClient() {
                         <Trash2 className="w-3.5 h-3.5" />
                         Clear
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => setShowCalendarPanel(!showCalendarPanel)}
-                        className="px-3 py-1.5 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 rounded-lg text-xs font-bold transition-all shadow-sm cursor-pointer"
-                      >
-                        {showCalendarPanel ? "Close Calendar" : "Change Date/Slot"}
-                      </button>
+                      {!followUpAppointmentId && (
+                        <button
+                          type="button"
+                          onClick={() => setShowCalendarPanel(!showCalendarPanel)}
+                          className="px-3 py-1.5 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 rounded-lg text-xs font-bold transition-all shadow-sm cursor-pointer"
+                        >
+                          {showCalendarPanel ? "Close Calendar" : "Change Date/Slot"}
+                        </button>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -1263,7 +1316,9 @@ export default function PatientIntakeClient() {
                                   onClick={() => {
                                     setUpcomingCallDate(selectedDate);
                                     setUpcomingCallTime(slot.startTime);
+                                    setUpcomingCallSlotId(slot.id);
                                     setUpcomingCallMode(slotModes[0]);
+                                    setFollowUpAppointmentId("");
                                     setShowCalendarPanel(false);
                                   }}
                                   className={cn(

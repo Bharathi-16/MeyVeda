@@ -107,14 +107,59 @@ export type AppointmentVideoRow = {
   session_started_at: string | null;
   session_ended_at: string | null;
   duration_min: number | null;
+
+  patient:
+    | { full_name: string | null }
+    | { full_name: string | null }[]
+    | null;
+
+  practitioner:
+    | {
+        user_id: string | null;
+        full_name: string | null;
+        specializations: string[] | null;
+        disciplines: string[] | null;
+      }
+    | {
+        user_id: string | null;
+        full_name: string | null;
+        specializations: string[] | null;
+        disciplines: string[] | null;
+      }[]
+    | null;
 };
 
 type SlotAppointmentData = {
   practitioner_id: string;
-  date: string;
+  slot_date: string;
   start_time: string;
-  duration_min: number | null;
+  end_time: string | null;
 };
+
+function computeSlotDurationMinutes(
+  startTime: string,
+  endTime: string | null,
+): number {
+  if (!endTime) {
+    return 30;
+  }
+
+  const [startH, startM] = startTime.split(":").map(Number);
+  const [endH, endM] = endTime.split(":").map(Number);
+
+  if (
+    Number.isNaN(startH) ||
+    Number.isNaN(startM) ||
+    Number.isNaN(endH) ||
+    Number.isNaN(endM)
+  ) {
+    return 30;
+  }
+
+  const minutes = endH * 60 + endM - (startH * 60 + startM);
+
+  return minutes > 0 ? minutes : 30;
+}
 
 /* -------------------------------------------------------------------------- */
 /*                              Select statements                             */
@@ -162,7 +207,9 @@ const VIDEO_APPOINTMENT_SELECT = `
   video_status,
   session_started_at,
   session_ended_at,
-  duration_min
+  duration_min,
+  patient:patients ( full_name ),
+  practitioner:practitioners ( user_id, full_name, specializations, disciplines )
 `;
 
 /* -------------------------------------------------------------------------- */
@@ -577,9 +624,9 @@ export class AppointmentsRepository {
         .from("slots")
         .select(`
           practitioner_id,
-          date,
+          slot_date,
           start_time,
-          duration_min
+          end_time
         `)
         .eq("id", slotId)
         .maybeSingle();
@@ -609,7 +656,7 @@ export class AppointmentsRepository {
       );
     }
 
-    if (!slot.date || !slot.start_time) {
+    if (!slot.slot_date || !slot.start_time) {
       throw new Error(
         "The selected slot does not contain a valid date and time",
       );
@@ -663,9 +710,12 @@ export class AppointmentsRepository {
          */
         doctor_profile_id: slot.practitioner_id,
 
-        scheduled_date: slot.date,
+        scheduled_date: slot.slot_date,
         scheduled_time: slot.start_time,
-        duration_min: slot.duration_min ?? 30,
+        duration_min: computeSlotDurationMinutes(
+          slot.start_time,
+          slot.end_time,
+        ),
 
         mode,
         status: "scheduled",
@@ -700,6 +750,65 @@ export class AppointmentsRepository {
     return {
       id: data.id,
     };
+  }
+
+  /**
+   * Resolve which practitioner a slot belongs to, so a caller can verify
+   * ownership before letting that slot be used to book on someone's behalf.
+   */
+  static async getSlotPractitionerId(
+    slotId: string,
+  ): Promise<string | null> {
+    const supabase = await createClient();
+
+    const { data, error } = await supabase
+      .from("slots")
+      .select("practitioner_id")
+      .eq("id", slotId)
+      .maybeSingle();
+
+    if (error) {
+      console.error(
+        "[AppointmentsRepository] Error resolving slot practitioner:",
+        error.message,
+      );
+
+      throw new Error(
+        "Database error while validating the selected slot",
+      );
+    }
+
+    return (data as { practitioner_id: string | null } | null)
+      ?.practitioner_id ?? null;
+  }
+
+  /**
+   * Verify a patients.id row exists (used when a practitioner books a
+   * follow-up on behalf of a patient they've been treating).
+   */
+  static async patientExists(
+    patientId: string,
+  ): Promise<boolean> {
+    const supabase = await createClient();
+
+    const { data, error } = await supabase
+      .from("patients")
+      .select("id")
+      .eq("id", patientId)
+      .maybeSingle();
+
+    if (error) {
+      console.error(
+        "[AppointmentsRepository] Error checking patient existence:",
+        error.message,
+      );
+
+      throw new Error(
+        "Database error while validating the patient",
+      );
+    }
+
+    return Boolean(data);
   }
 
   /* ------------------------------------------------------------------------ */
