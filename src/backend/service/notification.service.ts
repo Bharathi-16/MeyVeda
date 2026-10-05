@@ -19,7 +19,7 @@ export class NotificationService {
     if (authUser.role === "patient") {
       const patientId = await AppointmentsRepository.getPatientIdFromUserId(authUser.id);
       if (patientId) {
-        await NotificationRepository.processMissedAppointmentsForPatient(patientId, authUser.id);
+        await NotificationRepository.processMissedAppointmentsForPatient(patientId);
       }
     }
 

@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { setNavContext } from "@/lib/nav-context-client";
 import { ENABLE_VIDEO_CONSULTATION } from "@/lib/feature-flags";
 import type { AppointmentRow } from "@/features/appointments/appointments.type";
+import { MISSED_BY_LABEL_FOR_PATIENT } from "@/shared/appointments/attendance";
 import {
   Calendar,
   CheckCircle2,
@@ -217,11 +218,18 @@ export default function AppointmentsPage() {
     const { d: dateOnly, t: timeOnly } = splitDateTime(appt.date);
 
     const isMissed = isPast && appt.pastOutcome === "missed";
+    const isAwaitingNotes = isPast && appt.pastOutcome === "awaiting_notes";
 
-    const statusPill = isUpcoming
+    const statusPill = isUpcoming && appt.inSession
+      ? { label: "In Session", cls: "bg-emerald-50 text-emerald-700 border-emerald-100" }
+      : isUpcoming && appt.arrived
+      ? { label: "Arrived", cls: "bg-indigo-50 text-indigo-700 border-indigo-100" }
+      : isUpcoming
       ? { label: "Confirmed", cls: "bg-emerald-50 text-emerald-700 border-emerald-100" }
       : isMissed
       ? { label: "Missed", cls: "bg-amber-50 text-amber-700 border-amber-100" }
+      : isAwaitingNotes
+      ? { label: "Prescription Pending", cls: "bg-violet-50 text-violet-700 border-violet-100" }
       : isPast
       ? { label: "Completed", cls: "bg-slate-100 text-slate-500 border-slate-200" }
       : { label: "Cancelled", cls: "bg-red-50 text-red-500 border-red-100" };
@@ -267,6 +275,18 @@ export default function AppointmentsPage() {
                 )}
               </div>
 
+              {isMissed && appt.missedBy && (
+                <p className="text-[11px] text-amber-700 font-semibold">
+                  {appt.patientLeft ? "Closed — you left before the consultation" : MISSED_BY_LABEL_FOR_PATIENT[appt.missedBy]}
+                </p>
+              )}
+
+              {isAwaitingNotes && (
+                <p className="text-[11px] text-violet-700">
+                  Your consultation is done — your doctor is preparing your prescription.
+                </p>
+              )}
+
               {isCancelled && appt.reason && (
                 <p className="text-[11px] text-red-600">
                   <span className="font-bold">Reason:</span> {appt.reason}
@@ -307,7 +327,7 @@ export default function AppointmentsPage() {
                 </button>
               ) : null}
 
-              {isUpcoming && (
+              {isUpcoming && !appt.inSession && !appt.arrived && (
                 <button
                   onClick={() => setCancellingId(cancellingId === appt.id ? null : appt.id)}
                   className="py-2 px-4 rounded-full border border-neutral-200 hover:border-red-200 hover:bg-red-50 text-neutral-500 hover:text-red-500 text-xs font-bold transition-all cursor-pointer"

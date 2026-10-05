@@ -1,14 +1,16 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { ChatInboxShell, type ChatThread, type ChatMessage } from "@/components/chat/ChatInboxShell";
 import { uploadChatAttachment } from "@/lib/chat-attachments";
 import type { InboxThread, MessageRow } from "./type";
 import { setNavContext } from "@/lib/nav-context-client";
+import { useRealtimeSignal, useRealtimeTopics } from "@/hooks/use-realtime-signal";
 
-const INBOX_POLL_MS = 12000;
-const THREAD_POLL_MS = 8000;
+// New messages arrive instantly via Realtime; polling is only a safety net.
+const INBOX_POLL_MS = 60000;
+const THREAD_POLL_MS = 60000;
 
 async function fetchInbox(): Promise<InboxThread[]> {
   const response = await fetch("/api/pro-inbox", { method: "GET", credentials: "include", cache: "no-store" });
@@ -98,6 +100,18 @@ export default function InboxPage() {
     const interval = setInterval(() => loadMessages(activeThread.consultationId), THREAD_POLL_MS);
     return () => clearInterval(interval);
   }, [activeThread?.consultationId, loadMessages]);
+
+  const activeConsultationRef = useRef<string | null>(null);
+  activeConsultationRef.current = activeThread?.consultationId ?? null;
+
+  const { inbox: inboxTopic } = useRealtimeTopics();
+  useRealtimeSignal(
+    inboxTopic,
+    useCallback(() => {
+      void loadInbox();
+      if (activeConsultationRef.current) void loadMessages(activeConsultationRef.current);
+    }, [loadInbox, loadMessages])
+  );
 
   async function handleSend(e: React.FormEvent, file: File | null, replyToId: string | null): Promise<boolean> {
     e.preventDefault();

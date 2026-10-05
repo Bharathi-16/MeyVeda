@@ -126,6 +126,7 @@ export class ConsultationService {
     // practitionerId is always the authenticated practitioner (or their approved assistant), never client-supplied
     const result = await ConsultationRepository.saveCompleteConsultation({
       ...payload,
+      noPrescription: payload.noPrescription === true,
       practitionerId: await resolveActingPractitionerUserId(authUser),
     });
     const { consultationId } = result;

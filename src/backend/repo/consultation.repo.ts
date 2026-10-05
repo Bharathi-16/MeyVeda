@@ -65,6 +65,8 @@ export type SaveCompleteConsultationInput = {
     timing?: string;
   }[];
   prescriptionNotes?: string;
+  /** The doctor explicitly chose "No prescription needed" — advice/notes only, no medicines. */
+  noPrescription?: boolean;
   followUpInstructions?: string;
   followUpDate?: string;
   upcomingCallDate?: string;
@@ -192,12 +194,14 @@ export class ConsultationRepository {
     // clicked "Consult" from their queue), reuse it and mark it completed so
     // its original scheduled date/time is preserved everywhere it's displayed
     // — instead of fabricating a brand-new appointment at a mock time.
+    // Saving the consultation is the only step that completes an appointment:
+    // an in-session / awaiting-notes one moves to completed here.
     let apt: { id: string } | null = null;
 
     if (payload.appointmentId) {
       const { data: existingAppt, error: fetchErr } = await supabase
         .from("appointments")
-        .select("id")
+        .select("id, session_started_at, session_ended_at")
         .eq("id", payload.appointmentId)
         .eq("practitioner_id", practId)
         .eq("patient_id", patId)
@@ -210,7 +214,13 @@ export class ConsultationRepository {
       if (existingAppt) {
         const { error: updateErr } = await supabase
           .from("appointments")
-          .update({ status: "completed" })
+          .update({
+            status: "completed",
+            // In-clinic consults have no call to end — close the session here.
+            session_ended_at: existingAppt.session_started_at
+              ? existingAppt.session_ended_at ?? new Date().toISOString()
+              : existingAppt.session_ended_at,
+          })
           .eq("id", existingAppt.id);
 
         if (updateErr) throw new Error("Appointment update failed: " + updateErr.message);
@@ -388,8 +398,8 @@ export class ConsultationRepository {
 
     if (rxErr) throw new Error("Prescription insertion failed: " + rxErr.message);
 
-    // 6. Create prescription items
-    if (payload.medicines && payload.medicines.length > 0) {
+    // 6. Create prescription items (none when the doctor chose "No prescription needed")
+    if (!payload.noPrescription && payload.medicines && payload.medicines.length > 0) {
       const itemsToInsert = payload.medicines
         .map((m, idx: number) => ({
           prescription_id: rx.id,

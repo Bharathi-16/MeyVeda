@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import { setNavContext } from "@/lib/nav-context-client";
+import { MISSED_BY_LABEL_FOR_DOCTOR, type MissedBy } from "@/shared/appointments/attendance";
 async function getRegistryPatients(): Promise<Patient[]> {
   const response = await fetch("/api/registry", {
     method: "GET",
@@ -44,6 +45,8 @@ type AppointmentEntry = {
   time: string;
   status: "today" | "upcoming" | "missed";
   isMissed?: boolean;
+  missedBy?: MissedBy | null;
+  patientLeft?: boolean;
 };
 
 type FamilyMember = {
@@ -467,6 +470,9 @@ export default function PatientsPage() {
                           </span>
                         </div>
                         <p className="text-sm text-slate-600 font-medium">{appt.time || "Time not set"}</p>
+                        {appt.isMissed && appt.missedBy && (
+                          <p className="text-xs font-semibold text-amber-700">{appt.patientLeft ? "Patient left before the consultation" : MISSED_BY_LABEL_FOR_DOCTOR[appt.missedBy]}</p>
+                        )}
                       </div>
                     </div>
                   </div>

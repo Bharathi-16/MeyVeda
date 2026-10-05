@@ -43,3 +43,10 @@ export class RateLimitError extends AppError {
     super(message, 429);
   }
 }
+
+
+export class NotFoundError extends AppError {
+  constructor(message = "Not found") {
+    super(message, 404);
+  }
+}

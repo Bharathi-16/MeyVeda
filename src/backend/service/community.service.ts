@@ -4,6 +4,7 @@ import { CommunityRepository, type CommunityMessage } from "../repo/community.re
 import { AuthUser } from "@/shared/auth/auth.types";
 import { AppError, ForbiddenError } from "@/shared/api/api-error";
 import { randomUUID } from "crypto";
+import { RealtimeTopics, broadcastSignal } from "../realtime/realtime-signal";
 
 const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp", "application/pdf"];
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -73,12 +74,14 @@ export class CommunityService {
       }
     }
     await CommunityRepository.sendMessage(practitionerId, clean, replyToId, attachment);
+    await broadcastSignal([RealtimeTopics.community()], "message");
   }
 
   static async react(authUser: AuthUser, messageId: string, emoji: string): Promise<void> {
     const practitionerId = await requireMember(authUser);
     if (!messageId || !REACTION_EMOJIS.includes(emoji)) throw new AppError("Invalid reaction", 400);
     await CommunityRepository.toggleReaction(practitionerId, messageId, emoji);
+    await broadcastSignal([RealtimeTopics.community()], "reaction");
   }
 
   static async createAttachmentUpload(

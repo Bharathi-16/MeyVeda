@@ -5,6 +5,7 @@ import { AuthUser } from "@/shared/auth/auth.types";
 import { resolveActingPractitionerUserId } from "@/shared/auth/resolve-practitioner-context";
 import { ForbiddenError, AppError } from "@/shared/api/api-error";
 import { randomUUID } from "crypto";
+import { RealtimeTopics, broadcastSignal, type RealtimeEvent } from "../realtime/realtime-signal";
 
 const ALLOWED_ATTACHMENT_TYPES = ["image/png", "image/jpeg", "image/webp", "application/pdf"];
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
@@ -18,6 +19,19 @@ function validateAttachmentMeta(type: string, size: number) {
   if (!Number.isFinite(size) || size <= 0 || size > MAX_ATTACHMENT_BYTES) {
     throw new AppError("Attachments must be 5 MB or smaller", 400);
   }
+}
+
+async function signalParticipants(
+  consultationId: string,
+  event: RealtimeEvent,
+  only?: "patient" | "practitioner"
+): Promise<void> {
+  const participants = await MessageRepository.getConsultationParticipants(consultationId);
+  if (!participants) return;
+  const topics: string[] = [];
+  if (only !== "practitioner") topics.push(RealtimeTopics.patientInbox(participants.patient_id));
+  if (only !== "patient") topics.push(RealtimeTopics.practitionerInbox(participants.practitioner_id));
+  await broadcastSignal(topics, event);
 }
 
 async function assertParticipant(authUser: AuthUser, consultationId: string): Promise<"patient" | "practitioner"> {
@@ -57,7 +71,12 @@ export class MessageService {
       return [];
     }
     const role = await assertParticipant(authUser, consultationId);
-    await MessageRepository.markRead(consultationId, role);
+    const marked = await MessageRepository.markRead(consultationId, role);
+    if (marked > 0) {
+      // Let the sender's screen flip its read ticks. Only fires when something
+      // was actually marked, so two open screens can't ping-pong.
+      await signalParticipants(consultationId, "read", role === "patient" ? "practitioner" : "patient");
+    }
     return MessageRepository.getMessagesForConsultation(consultationId);
   }
 
@@ -104,5 +123,6 @@ export class MessageService {
       attachment,
       replyToId,
     });
+    await signalParticipants(consultationId, "message");
   }
 }

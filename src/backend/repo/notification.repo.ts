@@ -1,114 +1,75 @@
 import { createClient } from "@/shared/db/supabase.server";
 import { AppError } from "@/shared/api/api-error";
-import { EmailService } from "../service/email.service";
-
-// "missed" isn't a real appointment_status enum value — the terminal state
-// for a missed appointment is written as "no_show" below.
-const MISSABLE_STATUSES = ["completed", "cancelled", "no_show"];
-
-function formatTime(timeStr: string): string {
-  if (!timeStr) return "";
-  const [h, m] = timeStr.split(":");
-  const hours = parseInt(h, 10);
-  const period = hours >= 12 ? "PM" : "AM";
-  const h12 = hours % 12 || 12;
-  return `${h12}:${m} ${period}`;
-}
+import {
+  MISSABLE_APPOINTMENT_STATUSES,
+  isArrivedClinicPatient,
+  isPastMissedDeadline,
+} from "@/shared/appointments/attendance";
+import { AppointmentAttendanceRepository, MISSABLE_APPOINTMENT_COLUMNS } from "./appointment-attendance.repo";
 
 export class NotificationRepository {
   /**
-   * Scans a patient's own appointments for ones whose scheduled date/time has
-   * already passed without being completed, marks them "missed", and creates
-   * a one-time notification for the patient. Safe to call on every page load —
-   * the conditional status update ensures each appointment is only processed once.
+   * Scans a patient's own appointments — and their family members', which
+   * the account owner manages — for ones whose grace window has
+   * already passed while the patient and doctor were never in the
+   * consultation together, and marks them missed (which also notifies the
+   * patient once). Appointments already in session — or awaiting the
+   * doctor's notes — are never touched. Safe to call on every page load.
    */
-  static async processMissedAppointmentsForPatient(patientId: string, patientUserId: string): Promise<void> {
+  static async processMissedAppointmentsForPatient(patientId: string): Promise<void> {
     const supabase = await createClient();
     const todayStr = new Date().toLocaleDateString("en-CA");
+
+    const { data: familyMembers, error: familyError } = await supabase
+      .from("family_members")
+      .select("patient_id")
+      .eq("owner_patient_id", patientId)
+      .eq("is_active", true);
+
+    if (familyError) {
+      console.error("[NotificationRepository] Error resolving family members for missed check:", familyError.message);
+    }
+
+    const visiblePatientIds = [
+      patientId,
+      ...(familyMembers ?? []).map((member) => member.patient_id).filter(Boolean),
+    ];
 
     const { data: appointments, error } = await supabase
       .from("appointments")
       .select(`
-        id,
-        status,
-        scheduled_date,
-        scheduled_time,
-        practitioner:practitioners ( full_name )
+        ${MISSABLE_APPOINTMENT_COLUMNS},
+        practitioner:practitioners ( slot_duration_min, buffer_min )
       `)
-      .eq("patient_id", patientId)
+      .in("patient_id", visiblePatientIds)
       .lte("scheduled_date", todayStr)
-      .not("status", "in", `(${MISSABLE_STATUSES.join(",")})`);
+      .in("status", [...MISSABLE_APPOINTMENT_STATUSES]);
 
     if (error) {
       console.error("[NotificationRepository] Error fetching appointments for missed check:", error.message);
       return;
     }
 
-    const { data: patientRow } = await supabase
-      .from("patients")
-      .select("full_name, user:users ( email )")
-      .eq("id", patientId)
-      .maybeSingle();
-
-    const patientUser = Array.isArray(patientRow?.user) ? patientRow?.user[0] : patientRow?.user;
-    const patientEmail = (patientUser as any)?.email as string | undefined;
-    const patientFullName = patientRow?.full_name || "Patient";
-
-    const now = Date.now();
-
     for (const appt of (appointments || []) as any[]) {
       if (!appt.scheduled_date || !appt.scheduled_time) continue;
 
-      const scheduledAt = new Date(`${appt.scheduled_date}T${appt.scheduled_time}`).getTime();
-      if (Number.isNaN(scheduledAt) || scheduledAt >= now) continue;
-
-      // Conditional update: only proceeds (and only one caller wins) if the
-      // appointment is still in the status we just read, preventing duplicate
-      // notifications from concurrent/repeated calls.
-      // Note: the DB enum (appointment_status) has no "missed" value — its
-      // terminal label for this is "no_show".
-      const { data: updated, error: updateError } = await supabase
-        .from("appointments")
-        .update({ status: "no_show" })
-        .eq("id", appt.id)
-        .eq("status", appt.status)
-        .select("id");
-
-      if (updateError) {
-        console.error("[NotificationRepository] Error marking appointment missed:", updateError.message);
-        continue;
-      }
-      if (!updated || updated.length === 0) continue;
-
-      const practitioner = Array.isArray(appt.practitioner) ? appt.practitioner[0] : appt.practitioner;
-      const practitionerName = practitioner?.full_name || "your practitioner";
-      const formattedDate = new Date(`${appt.scheduled_date}T00:00:00`).toLocaleDateString("en-US", {
-        month: "long",
-        day: "numeric",
-        year: "numeric",
+      // Same slot-duration + buffer grace window as the doctor's queue view —
+      // pulled live from that appointment's own practitioner, since it varies
+      // doctor to doctor and can change over time.
+      const practitionerRow = Array.isArray(appt.practitioner) ? appt.practitioner[0] : appt.practitioner;
+      // An arrived in-clinic patient waits until that doctor's working hours end.
+      const workingEndTime =
+        isArrivedClinicPatient(appt) && appt.practitioner_id
+          ? await AppointmentAttendanceRepository.getWorkingEndTime(appt.practitioner_id, appt.scheduled_date)
+          : null;
+      const isPast = isPastMissedDeadline(appt, {
+        slotDurationMin: practitionerRow?.slot_duration_min,
+        bufferMin: practitionerRow?.buffer_min,
+        workingEndTime,
       });
-      const apptTime = formatTime(appt.scheduled_time);
+      if (!isPast) continue;
 
-      const { error: notifError } = await supabase.from("notifications").insert({
-        user_id: patientUserId,
-        channel: "in_app",
-        title: "Appointment Missed",
-        body: `Your appointment with ${practitionerName} on ${formattedDate} at ${apptTime} was missed. You can book another appointment if you would like to continue your consultation.`,
-        is_read: false,
-      });
-
-      if (notifError) {
-        console.error("[NotificationRepository] Error inserting missed appointment notification:", notifError.message);
-      }
-
-      if (patientEmail) {
-        await EmailService.sendAppointmentMissed(patientEmail, {
-          patientName: patientFullName,
-          practitionerName,
-          date: formattedDate,
-          time: apptTime,
-        });
-      }
+      await AppointmentAttendanceRepository.markMissed(appt);
     }
   }
 

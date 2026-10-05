@@ -26,58 +26,67 @@ export type AppointmentDbRow = {
   cancellation_reason: string | null;
   cancelled_at: string | null;
 
+  video_status: string | null;
+  session_ended_at: string | null;
+  missed_by: string | null;
+  patient_joined_at: string | null;
+
   slot:
-    | {
-        fee: number | null;
-      }
-    | {
-        fee: number | null;
-      }[]
-    | null;
+  | {
+    fee: number | null;
+  }
+  | {
+    fee: number | null;
+  }[]
+  | null;
 
   practitioner:
-    | {
-        id: string;
-        full_name: string | null;
-        specializations: string[] | null;
-        disciplines: string[] | null;
-        base_video_fee: number | null;
-        base_clinic_fee: number | null;
-      }
-    | {
-        id: string;
-        full_name: string | null;
-        specializations: string[] | null;
-        disciplines: string[] | null;
-        base_video_fee: number | null;
-        base_clinic_fee: number | null;
-      }[]
-    | null;
+  | {
+    id: string;
+    full_name: string | null;
+    specializations: string[] | null;
+    disciplines: string[] | null;
+    base_video_fee: number | null;
+    base_clinic_fee: number | null;
+    slot_duration_min: number | null;
+    buffer_min: number | null;
+  }
+  | {
+    id: string;
+    full_name: string | null;
+    specializations: string[] | null;
+    disciplines: string[] | null;
+    base_video_fee: number | null;
+    base_clinic_fee: number | null;
+    slot_duration_min: number | null;
+    buffer_min: number | null;
+  }[]
+  | null;
 
   consultation:
+  | {
+    id: string;
+    rating:
     | {
-        id: string;
-        rating:
-          | {
-              stars: number | null;
-            }
-          | {
-              stars: number | null;
-            }[]
-          | null;
-      }
+      stars: number | null;
+    }
     | {
-        id: string;
-        rating:
-          | {
-              stars: number | null;
-            }
-          | {
-              stars: number | null;
-            }[]
-          | null;
-      }[]
+      stars: number | null;
+    }[]
     | null;
+  }
+  | {
+    id: string;
+    rating:
+    | {
+      stars: number | null;
+    }
+    | {
+      stars: number | null;
+    }[]
+    | null;
+  }[]
+  | null;
 };
 
 export type AppointmentOwnershipRow = {
@@ -108,25 +117,32 @@ export type AppointmentVideoRow = {
   session_ended_at: string | null;
   duration_min: number | null;
 
+  patient_joined_at: string | null;
+  practitioner_joined_at: string | null;
+
   patient:
-    | { full_name: string | null }
-    | { full_name: string | null }[]
-    | null;
+  | { full_name: string | null }
+  | { full_name: string | null }[]
+  | null;
 
   practitioner:
-    | {
-        user_id: string | null;
-        full_name: string | null;
-        specializations: string[] | null;
-        disciplines: string[] | null;
-      }
-    | {
-        user_id: string | null;
-        full_name: string | null;
-        specializations: string[] | null;
-        disciplines: string[] | null;
-      }[]
-    | null;
+  | {
+    user_id: string | null;
+    full_name: string | null;
+    specializations: string[] | null;
+    disciplines: string[] | null;
+    slot_duration_min: number | null;
+    buffer_min: number | null;
+  }
+  | {
+    user_id: string | null;
+    full_name: string | null;
+    specializations: string[] | null;
+    disciplines: string[] | null;
+    slot_duration_min: number | null;
+    buffer_min: number | null;
+  }[]
+  | null;
 };
 
 type SlotAppointmentData = {
@@ -175,6 +191,10 @@ const APPOINTMENT_SELECT = `
   duration_min,
   cancellation_reason,
   cancelled_at,
+  video_status,
+  session_ended_at,
+  missed_by,
+  patient_joined_at,
   slot:slots (
     fee
   ),
@@ -184,7 +204,9 @@ const APPOINTMENT_SELECT = `
     specializations,
     disciplines,
     base_video_fee,
-    base_clinic_fee
+    base_clinic_fee,
+    slot_duration_min,
+    buffer_min
   ),
   consultation:consultations (
     id,
@@ -208,8 +230,10 @@ const VIDEO_APPOINTMENT_SELECT = `
   session_started_at,
   session_ended_at,
   duration_min,
+  patient_joined_at,
+  practitioner_joined_at,
   patient:patients ( full_name ),
-  practitioner:practitioners ( user_id, full_name, specializations, disciplines )
+  practitioner:practitioners ( user_id, full_name, specializations, disciplines, slot_duration_min, buffer_min )
 `;
 
 /* -------------------------------------------------------------------------- */
@@ -281,6 +305,45 @@ export class AppointmentsRepository {
     userId: string,
   ): Promise<string | null> {
     return this.getDoctorIdFromUserId(userId);
+  }
+
+  /**
+   * Whether the account owner (ownerPatientId) may act on an appointment
+   * booked under appointmentPatientId: their own, or one of their active
+   * family members' (family members have no login — the owner joins,
+   * cancels and follows up on their behalf).
+   */
+  static async isOwnOrFamilyPatient(
+    ownerPatientId: string,
+    appointmentPatientId: string,
+  ): Promise<boolean> {
+    if (ownerPatientId === appointmentPatientId) {
+      return true;
+    }
+
+    const supabase = await createClient();
+
+    const { data, error } = await supabase
+      .from("family_members")
+      .select("id")
+      .eq("owner_patient_id", ownerPatientId)
+      .eq("patient_id", appointmentPatientId)
+      .eq("is_active", true)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.error(
+        "[AppointmentsRepository] Error checking family member ownership:",
+        error.message,
+      );
+
+      throw new Error(
+        "Database error while checking family member access",
+      );
+    }
+
+    return Boolean(data);
   }
 
   /**
@@ -960,7 +1023,7 @@ export class AppointmentsRepository {
             1,
             Math.ceil(
               (now.getTime() - startedAt.getTime()) /
-                60_000,
+              60_000,
             ),
           );
         }

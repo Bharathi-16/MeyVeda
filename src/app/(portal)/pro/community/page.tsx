@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ChatInboxShell, type ChatMessage, type ChatThread } from "@/components/chat/ChatInboxShell";
 import { uploadCommunityAttachment } from "@/lib/chat-attachments";
 import { useAuth } from "@/contexts/auth-context";
+import { useRealtimeSignal, useRealtimeTopics } from "@/hooks/use-realtime-signal";
 
 type GroupMessage = {
   id: string;
@@ -17,8 +18,9 @@ type GroupMessage = {
 };
 type State = { isMember: boolean; memberCount: number };
 
-const STATE_POLL_MS = 15000;
-const MESSAGE_POLL_MS = 6000;
+// New messages arrive instantly via Realtime; polling is only a safety net.
+const STATE_POLL_MS = 60000;
+const MESSAGE_POLL_MS = 60000;
 const GROUP_ID = "doctors-community";
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
@@ -85,6 +87,9 @@ export default function CommunityPage() {
     const interval = setInterval(loadMessages, MESSAGE_POLL_MS);
     return () => clearInterval(interval);
   }, [isMember, loadMessages]);
+
+  const { community: communityTopic } = useRealtimeTopics(isDoctor);
+  useRealtimeSignal(isMember ? communityTopic : null, loadMessages);
 
   async function join() {
     setJoining(true);

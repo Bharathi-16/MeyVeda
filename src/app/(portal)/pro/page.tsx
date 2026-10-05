@@ -27,6 +27,7 @@ import { useQuery } from "@/hooks/useQuery";
 import { cn } from "@/lib/utils";
 import type { QueuePatient, QueueStatus } from "@/lib/types";
 import { apiClient } from "@/shared/api/api-client";
+import { MISSED_BY_LABEL_FOR_DOCTOR, type ClinicCloseReason } from "@/shared/appointments/attendance";
 
 type PractitionerUpcomingAppointment = {
   appointmentId: string;
@@ -115,6 +116,12 @@ const STATUS_CONFIG: Record<
       "bg-emerald-50 text-emerald-700 border border-emerald-200",
     dot: "bg-emerald-500 animate-pulse",
   },
+  "awaiting-notes": {
+    label: "Awaiting Notes",
+    color:
+      "bg-violet-50 text-violet-700 border border-violet-200",
+    dot: "bg-violet-500",
+  },
   completed: {
     label: "Completed",
     color:
@@ -132,6 +139,8 @@ const STATUS_CONFIG: Record<
 function isAppointmentTimePast(
   dateStr: string,
   timeStr: string,
+  slotDurationMin: number,
+  bufferMin: number,
 ): boolean {
   const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
   if (!match) {
@@ -153,7 +162,13 @@ function isAppointmentTimePast(
     Number(minuteRaw),
   );
 
-  return appointmentDate.getTime() < Date.now();
+  // An appointment stays active for its full window — start time plus the
+  // practitioner's configured slot duration and buffer — not just until the
+  // scheduled start time is reached.
+  const windowEnd =
+    appointmentDate.getTime() + (slotDurationMin + bufferMin) * 60_000;
+
+  return windowEnd < Date.now();
 }
 
 export default function ProDashboardPage() {
@@ -200,8 +215,80 @@ export default function ProDashboardPage() {
 
   // ── Queue for selected date ─────────────────────────────────────────────────
   // usePractitionerQueue expects the practitioners table PK (practitioner?.id).
-  const { data: rawQueuePatients, loading: queueLoading } =
+  const { data: rawQueuePatients, loading: queueLoading, refetch: refetchQueue } =
     usePractitionerQueue(practitioner?.id, selectedDate);
+  const [startingConsultId, setStartingConsultId] = useState<string | null>(null);
+  const [markingArrivedId, setMarkingArrivedId] = useState<string | null>(null);
+
+  // Closing an arrived in-clinic appointment that won't be seen today.
+  const [closingPatient, setClosingPatient] = useState<QueuePatient | null>(null);
+  const [closeReason, setCloseReason] = useState<ClinicCloseReason>("doctor_unavailable");
+  const [isClosing, setIsClosing] = useState(false);
+
+  const closeArrivedAppointment = async () => {
+    if (!closingPatient) return;
+    setIsClosing(true);
+    try {
+      await apiClient(
+        `/api/appointments?action=close-arrived&appointmentId=${encodeURIComponent(closingPatient.appointmentId)}`,
+        { method: "PATCH", body: JSON.stringify({ reason: closeReason }) },
+      );
+      setClosingPatient(null);
+    } catch (closeError) {
+      alert(closeError instanceof Error ? closeError.message : "Unable to close this appointment");
+    } finally {
+      setIsClosing(false);
+      refetchQueue();
+    }
+  };
+
+  // Reception marks an in-clinic patient as arrived: they then wait for the
+  // doctor and are no longer missed at the slot cutoff.
+  const markArrived = async (patient: QueuePatient) => {
+    setMarkingArrivedId(patient.appointmentId);
+    try {
+      await apiClient(
+        `/api/appointments?action=mark-arrived&appointmentId=${encodeURIComponent(patient.appointmentId)}`,
+        { method: "PATCH" },
+      );
+    } catch (arrivedError) {
+      alert(arrivedError instanceof Error ? arrivedError.message : "Unable to mark this patient as arrived");
+    } finally {
+      setMarkingArrivedId(null);
+      refetchQueue();
+    }
+  };
+
+  const openConsultForm = async (patient: QueuePatient) => {
+    await setNavContext("patient", {
+      patientId: patient.id,
+      appointmentId: patient.appointmentId,
+    });
+    router.push("/pro/patient");
+  };
+
+  // Starting an in-clinic consult checks the patient in (in session), so the
+  // slot can no longer be marked missed while the doctor writes notes.
+  const startConsult = async (patient: QueuePatient) => {
+    if (patient.mode !== "clinic" || patient.status === "in-session") {
+      await openConsultForm(patient);
+      return;
+    }
+
+    setStartingConsultId(patient.appointmentId);
+    try {
+      await apiClient(
+        `/api/appointments?action=start-consult&appointmentId=${encodeURIComponent(patient.appointmentId)}`,
+        { method: "PATCH" },
+      );
+      await openConsultForm(patient);
+    } catch (startError) {
+      alert(startError instanceof Error ? startError.message : "Unable to start this consultation");
+      refetchQueue();
+    } finally {
+      setStartingConsultId(null);
+    }
+  };
   const queuePatients: QueuePatient[] = rawQueuePatients ?? [];
 
   // Status (waiting/checked-in/in-session/completed/missed) is decided
@@ -226,10 +313,18 @@ export default function ProDashboardPage() {
   // ── Upcoming appointments (today + future) ──────────────────────────────────
   const { data: rawUpcoming, loading: upcomingLoading } =
     usePractitionerUpcomingAppointments(practitioner?.id);
+  const slotDurationMin = practitioner?.slotDuration ?? 20;
+  const bufferMin = practitioner?.bufferMin ?? 0;
   const upcomingAppointments: PractitionerUpcomingAppointment[] = (
     rawUpcoming ?? []
   ).filter(
-    (appointment) => !isAppointmentTimePast(appointment.date, appointment.time),
+    (appointment) =>
+      !isAppointmentTimePast(
+        appointment.date,
+        appointment.time,
+        slotDurationMin,
+        bufferMin,
+      ),
   );
 
   // Split into today vs future.
@@ -634,6 +729,11 @@ export default function ProDashboardPage() {
                                     <p className="text-sm text-gray-600 truncate">{patient.reason || "No specific reason provided"}</p>
                                     <div className="flex items-center gap-3 mt-2 text-xs font-medium text-gray-500">
                                       <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5"/> {patient.time}</span>
+                                      {patient.mode === "clinic" && patient.status === "checked-in" && (
+                                        <span className="text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
+                                          Arrived · waiting {patient.waitMins} min
+                                        </span>
+                                      )}
                                       {patient.abha && (
                                         <span className="text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">ABHA ✓</span>
                                       )}
@@ -650,7 +750,12 @@ export default function ProDashboardPage() {
                                   </div>
 
                                   {patient.status === "missed" && (
-                                    <div className="flex gap-2">
+                                    <div className="flex flex-col sm:items-end gap-2">
+                                      {patient.missedBy && (
+                                        <span className="text-xs font-semibold text-red-600">
+                                          {patient.patientLeft ? "Patient left before the consultation" : MISSED_BY_LABEL_FOR_DOCTOR[patient.missedBy]}
+                                        </span>
+                                      )}
                                       <span
                                         className="inline-flex items-center justify-center rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-400 bg-gray-50 cursor-not-allowed"
                                         aria-disabled="true"
@@ -661,9 +766,23 @@ export default function ProDashboardPage() {
                                     </div>
                                   )}
 
-                                  {isPending && (
+                                  {patient.status === "awaiting-notes" && (
+                                    <div className="flex flex-col sm:items-end gap-2">
+                                      <span className="text-xs font-semibold text-violet-600">
+                                        Call ended — add prescription or notes to complete
+                                      </span>
+                                      <button
+                                        onClick={() => void openConsultForm(patient)}
+                                        className="inline-flex items-center justify-center rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-violet-700 shadow-sm"
+                                      >
+                                        Add Notes
+                                      </button>
+                                    </div>
+                                  )}
+
+                                  {(isPending || patient.status === "in-session") && (
                                       <div className="flex gap-2">
-                                        {selectedDate !== todayStr ? (
+                                        {selectedDate !== todayStr && patient.status !== "in-session" ? (
                                           <span
                                             className="inline-flex items-center justify-center rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-400 bg-gray-50 cursor-not-allowed"
                                             aria-disabled="true"
@@ -683,21 +802,36 @@ export default function ProDashboardPage() {
                                                 className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 shadow-sm"
                                               >
                                                 <Video className="w-3.5 h-3.5" />
-                                                Start Video
+                                                {patient.status === "in-session" ? "Rejoin Video" : "Start Video"}
+                                              </button>
+                                            )}
+                                            {patient.mode === "clinic" && patient.status === "waiting" && (
+                                              <button
+                                                onClick={() => void markArrived(patient)}
+                                                disabled={markingArrivedId === patient.appointmentId}
+                                                className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 shadow-sm disabled:opacity-50"
+                                              >
+                                                {markingArrivedId === patient.appointmentId ? "Marking…" : "Mark Arrived"}
                                               </button>
                                             )}
                                             <button
-                                              onClick={async () => {
-                                                await setNavContext("patient", {
-                                                  patientId: patient.id,
-                                                  appointmentId: patient.appointmentId,
-                                                });
-                                                router.push("/pro/patient");
-                                              }}
-                                              className="inline-flex items-center justify-center rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+                                              onClick={() => void startConsult(patient)}
+                                              disabled={startingConsultId === patient.appointmentId}
+                                              className="inline-flex items-center justify-center rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
                                             >
-                                              Consult
+                                              {startingConsultId === patient.appointmentId ? "Starting…" : "Consult"}
                                             </button>
+                                            {patient.mode === "clinic" && patient.status === "checked-in" && (
+                                              <button
+                                                onClick={() => {
+                                                  setCloseReason("doctor_unavailable");
+                                                  setClosingPatient(patient);
+                                                }}
+                                                className="inline-flex items-center justify-center rounded-xl border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 transition-colors hover:bg-red-50"
+                                              >
+                                                Close
+                                              </button>
+                                            )}
                                           </div>
                                         )}
 
@@ -879,6 +1013,61 @@ export default function ProDashboardPage() {
           </>
         )}
       </div>
+
+      {closingPatient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-bold text-gray-900">Close this appointment?</h3>
+            <p className="mt-1 text-sm text-gray-600">
+              {closingPatient.name} has arrived but won&apos;t be seen today. The appointment will be marked missed and the patient will be notified.
+            </p>
+
+            <div className="mt-4 space-y-2">
+              {([
+                { value: "doctor_unavailable", label: "Doctor not available", hint: "The patient is not at fault and is asked to rebook." },
+                { value: "patient_left", label: "Patient left / couldn't wait", hint: "The patient left before the consultation." },
+              ] as const).map((option) => (
+                <label
+                  key={option.value}
+                  className={cn(
+                    "flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 transition-colors",
+                    closeReason === option.value ? "border-indigo-300 bg-indigo-50" : "border-gray-200 hover:bg-gray-50",
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="close-reason"
+                    className="mt-1 accent-indigo-600"
+                    checked={closeReason === option.value}
+                    onChange={() => setCloseReason(option.value)}
+                  />
+                  <span>
+                    <span className="block text-sm font-semibold text-gray-900">{option.label}</span>
+                    <span className="block text-xs text-gray-500">{option.hint}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={() => setClosingPatient(null)}
+                disabled={isClosing}
+                className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void closeArrivedAppointment()}
+                disabled={isClosing}
+                className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+              >
+                {isClosing ? "Closing…" : "Close appointment"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

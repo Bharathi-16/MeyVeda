@@ -13,7 +13,7 @@ export type AYUSHDiscipline =
   | "Siddha"
   | "Homeopathy";
 
-export type QueueStatus = "waiting" | "checked-in" | "in-session" | "completed" | "missed";
+export type QueueStatus = "waiting" | "checked-in" | "in-session" | "awaiting-notes" | "completed" | "missed";
 
 export type IntakeTab = "intake" | "vitals" | "medical-history" | "history" | "care-team" | "reports";
 

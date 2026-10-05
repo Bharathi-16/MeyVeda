@@ -87,10 +87,10 @@ export function UpcomingCarousel({ appointments }: { appointments: any[] }) {
               </div>
             </div>
 
-            <Link href={ENABLE_VIDEO_CONSULTATION ? `/consult?id=${appt.consultationId || appt.id}` : "/appointments"} className="block">
+            <Link href={ENABLE_VIDEO_CONSULTATION && appt.mode === "video" ? `/consult?id=${appt.consultationId || appt.id}` : "/appointments"} className="block">
               <button className="w-full py-2.5 bg-white text-herb-green text-[11px] font-extrabold rounded-xl border border-herb-green/30 hover:bg-herb-green/5 transition-all flex items-center justify-center gap-1.5 group-hover:bg-herb-green group-hover:text-white group-hover:border-herb-green shadow-sm active:scale-95 tracking-wide uppercase">
-                {ENABLE_VIDEO_CONSULTATION ? <Video size={13} /> : <Calendar size={13} />}
-                <span>{ENABLE_VIDEO_CONSULTATION ? "Join Session" : "View Details"}</span>
+                {ENABLE_VIDEO_CONSULTATION && appt.mode === "video" ? <Video size={13} /> : <Calendar size={13} />}
+                <span>{ENABLE_VIDEO_CONSULTATION && appt.mode === "video" ? "Join Session" : "View Details"}</span>
               </button>
             </Link>
           </div>

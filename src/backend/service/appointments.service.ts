@@ -11,11 +11,23 @@ import {
 } from "../repo/appointments.repo";
 import { EmailService } from "./email.service";
 import { NotificationRepository } from "../repo/notification.repo";
+import { AppointmentAttendanceRepository } from "../repo/appointment-attendance.repo";
 
 import type { AuthUser } from "@/shared/auth/auth.types";
 import { resolveActingPractitionerUserId } from "@/shared/auth/resolve-practitioner-context";
 import { AppError } from "@/shared/api/api-error";
 import { resolveActiveFeeRupees } from "@/lib/fee";
+import { getAppointmentCutoffMs, isAppointmentPastCutoff } from "@/shared/appointments/missed-cutoff";
+import {
+  didPatientLeave,
+  isArrivedClinicPatient,
+  isAwaitingNotes,
+  isMissableStatus,
+  isMissedBy,
+  isPastMissedDeadline,
+  type ClinicCloseReason,
+  type MissedBy,
+} from "@/shared/appointments/attendance";
 
 /* -------------------------------------------------------------------------- */
 /*                                   Types                                    */
@@ -44,7 +56,15 @@ export type AppointmentRow = {
   timeRaw: string;
   mode: AppointmentMode;
   status: "upcoming" | "past" | "cancelled";
-  pastOutcome?: "completed" | "missed";
+  pastOutcome?: "completed" | "missed" | "awaiting_notes";
+  /** For a missed appointment: who didn't show up. */
+  missedBy?: MissedBy;
+  /** Missed in-clinic visit where the patient had arrived but left before being seen. */
+  patientLeft?: boolean;
+  /** Both sides have joined and the consultation is happening right now. */
+  inSession?: boolean;
+  /** In-clinic: the patient has been marked arrived and is waiting for the doctor. */
+  arrived?: boolean;
   fee: string;
   duration?: string;
   rating?: number;
@@ -52,6 +72,8 @@ export type AppointmentRow = {
   reason?: string;
   refunded?: boolean;
   reminder: boolean;
+  /** e.g. "7:00 PM" — when this slot's grace window (duration + buffer) ends, for upcoming appointments only. */
+  expiresAtLabel?: string;
 };
 
 export type JitsiVideoSession = {
@@ -131,6 +153,10 @@ export const videoAppointmentIdParamSchema = z.object({
   appointmentId: z
     .string()
     .uuid("Invalid video appointment ID format"),
+});
+
+export const closeClinicAppointmentSchema = z.object({
+  reason: z.enum(["doctor_unavailable", "patient_left"]),
 });
 
 export const updateVideoStatusSchema = z.object({
@@ -643,7 +669,10 @@ export class AppointmentsService {
 
       authorized =
         Boolean(patientId) &&
-        appointment.patient_id === patientId;
+        (await AppointmentsRepository.isOwnOrFamilyPatient(
+          patientId as string,
+          appointment.patient_id,
+        ));
     } else if (isPractitionerRole(authUser)) {
       const practitionerId =
         await AppointmentsRepository.getPractitionerIdFromUserId(
@@ -710,6 +739,124 @@ export class AppointmentsService {
     }
   }
 
+  /**
+   * The practitioner's side (doctor or assistant) marks an in-clinic
+   * patient as arrived, so they are no longer missed at the slot cutoff
+   * while waiting for the doctor.
+   */
+  static async markClinicArrived(
+    authUser: AuthUser,
+    appointmentId: string,
+  ): Promise<void> {
+    if (!isPractitionerRole(authUser)) {
+      throw new AppError(
+        "Only the practitioner's team can mark a patient as arrived",
+        403,
+      );
+    }
+
+    const practitionerId =
+      await AppointmentsRepository.getPractitionerIdFromUserId(
+        await resolveActingPractitionerUserId(authUser),
+      );
+
+    if (!practitionerId) {
+      throw new AppError("Practitioner profile not found", 404);
+    }
+
+    const marked =
+      await AppointmentAttendanceRepository.markClinicArrived(
+        appointmentId,
+        practitionerId,
+      );
+
+    if (!marked) {
+      throw new AppError(
+        "This patient can't be marked arrived — only today's in-clinic appointments that are still waiting can be",
+        409,
+      );
+    }
+  }
+
+  /**
+   * The practitioner's side closes an arrived in-clinic appointment that
+   * won't be seen today — the doctor isn't available, or the patient left.
+   */
+  static async closeArrivedClinicAppointment(
+    authUser: AuthUser,
+    appointmentId: string,
+    reason: ClinicCloseReason,
+  ): Promise<void> {
+    if (!isPractitionerRole(authUser)) {
+      throw new AppError(
+        "Only the practitioner's team can close an appointment",
+        403,
+      );
+    }
+
+    const practitionerId =
+      await AppointmentsRepository.getPractitionerIdFromUserId(
+        await resolveActingPractitionerUserId(authUser),
+      );
+
+    if (!practitionerId) {
+      throw new AppError("Practitioner profile not found", 404);
+    }
+
+    const closed =
+      await AppointmentAttendanceRepository.closeArrivedClinicAppointment(
+        appointmentId,
+        practitionerId,
+        reason,
+      );
+
+    if (!closed) {
+      throw new AppError(
+        "This appointment can't be closed — only in-clinic appointments with an arrived patient can be",
+        409,
+      );
+    }
+  }
+
+  /**
+   * The practitioner starts an in-clinic consultation from their queue. The
+   * patient is physically present, so both sides are in: the appointment
+   * moves to in_session and can no longer be marked missed.
+   */
+  static async startClinicConsult(
+    authUser: AuthUser,
+    appointmentId: string,
+  ): Promise<void> {
+    if (!isPractitionerRole(authUser)) {
+      throw new AppError(
+        "Only the practitioner can start a consultation",
+        403,
+      );
+    }
+
+    const practitionerId =
+      await AppointmentsRepository.getPractitionerIdFromUserId(
+        await resolveActingPractitionerUserId(authUser),
+      );
+
+    if (!practitionerId) {
+      throw new AppError("Practitioner profile not found", 404);
+    }
+
+    const started =
+      await AppointmentAttendanceRepository.startClinicConsult(
+        appointmentId,
+        practitionerId,
+      );
+
+    if (!started) {
+      throw new AppError(
+        "This clinic appointment can't be started — it may have been missed, cancelled or already completed",
+        409,
+      );
+    }
+  }
+
   /* ------------------------------------------------------------------------ */
   /*                         Jitsi video-call services                         */
   /* ------------------------------------------------------------------------ */
@@ -760,7 +907,10 @@ export class AppointmentsService {
 
       if (
         !patientId ||
-        appointment.patient_id !== patientId
+        !(await AppointmentsRepository.isOwnOrFamilyPatient(
+          patientId,
+          appointment.patient_id,
+        ))
       ) {
         throw new AppError(
           "You are not authorized to access this video consultation",
@@ -823,6 +973,26 @@ export class AppointmentsService {
       );
     }
 
+    // The slot's grace window is over and the two sides were never in the
+    // consultation together: it's missed, not joinable. (Once both have
+    // joined — in_session — the clock no longer matters.)
+    if (
+      isMissableStatus(appointment.status) &&
+      isAppointmentPastCutoff(
+        appointment.scheduled_date,
+        appointment.scheduled_time,
+        getFirst(appointment.practitioner)?.slot_duration_min,
+        getFirst(appointment.practitioner)?.buffer_min,
+      )
+    ) {
+      await AppointmentAttendanceRepository.markMissed(appointment);
+
+      throw new AppError(
+        "This appointment was missed — its time slot has ended",
+        409,
+      );
+    }
+
     assertWithinJoinWindow(appointment);
 
     const requestingRole = isAdminRole(authUser)
@@ -863,6 +1033,15 @@ export class AppointmentsService {
       );
     }
 
+    // Record who has shown up. The first arrival checks the slot in; both
+    // arriving puts it in session, after which it can never be marked missed.
+    if (requestingRole !== "admin") {
+      await AppointmentAttendanceRepository.recordVideoArrival(
+        appointment.id,
+        requestingRole,
+      );
+    }
+
     const otherParty = resolveOtherParty(
       appointment,
       requestingRole,
@@ -878,7 +1057,9 @@ export class AppointmentsService {
       if (practitioner?.user_id) {
         await NotificationRepository.notifyPatientWaitingForVideo({
           practitionerUserId: practitioner.user_id,
-          patientName: displayName,
+          patientName:
+            getFirst(appointment.patient)?.full_name?.trim() ||
+            displayName,
           appointmentId: appointment.id,
         }).catch((notifyError) => {
           console.error(
@@ -895,15 +1076,15 @@ export class AppointmentsService {
     const jwt =
       jitsiAppId && jitsiAppSecret
         ? signJitsiJwt({
-            appId: jitsiAppId,
-            appSecret: jitsiAppSecret,
-            roomName: appointment.video_room_name,
-            userId: authUser.id,
-            displayName,
-            isModerator:
-              requestingRole === "practitioner" ||
-              requestingRole === "admin",
-          })
+          appId: jitsiAppId,
+          appSecret: jitsiAppSecret,
+          roomName: appointment.video_room_name,
+          userId: authUser.id,
+          displayName,
+          isModerator:
+            requestingRole === "practitioner" ||
+            requestingRole === "admin",
+        })
         : undefined;
 
     return {
@@ -961,6 +1142,25 @@ export class AppointmentsService {
         "Only the practitioner can start, end, or cancel this video consultation",
         403,
       );
+    }
+
+    // The doctor leaving (or refreshing) before the patient ever joined must
+    // not close the room — otherwise the patient could never get in and the
+    // slot would be wrongly counted as a patient no-show. Keep it open;
+    // the missed cutoff still applies if nobody comes back.
+    if (
+      videoStatus === "ended" &&
+      isMissableStatus(appointment.status) &&
+      !appointment.patient_joined_at
+    ) {
+      return {
+        success: true,
+        appointmentId: appointment.id,
+        videoStatus: appointment.video_status,
+        sessionStartedAt: appointment.session_started_at,
+        sessionEndedAt: appointment.session_ended_at,
+        durationMin: appointment.duration_min,
+      };
     }
 
     this.assertVideoStatusTransition(
@@ -1057,8 +1257,7 @@ export class AppointmentsService {
       )}`;
 
       const appointmentDate = new Date(
-        `${row.scheduled_date}T${
-          row.scheduled_time || "00:00:00"
+        `${row.scheduled_date}T${row.scheduled_time || "00:00:00"
         }`,
       );
 
@@ -1071,13 +1270,13 @@ export class AppointmentsService {
       const dateText = isToday
         ? `Today, ${formatTime(row.scheduled_time)}`
         : `${appointmentDate.toLocaleDateString(
-            "en-IN",
-            {
-              day: "numeric",
-              month: "short",
-              year: "numeric",
-            },
-          )} · ${formatTime(row.scheduled_time)}`;
+          "en-IN",
+          {
+            day: "numeric",
+            month: "short",
+            year: "numeric",
+          },
+        )} · ${formatTime(row.scheduled_time)}`;
 
       let uiStatus:
         | "upcoming"
@@ -1086,16 +1285,28 @@ export class AppointmentsService {
       let pastOutcome:
         | "completed"
         | "missed"
+        | "awaiting_notes"
         | undefined;
+      let missedBy: MissedBy | undefined;
+      let patientLeft = false;
 
-      // "Missed" is derived from the scheduled window (start + duration),
-      // not just the start time, so a slot in progress never flashes as
-      // missed. Deriving it from immutable stored fields (date/time/
-      // duration/status) instead of a separate write keeps it stable
-      // across refreshes even before the async no_show job runs.
-      const scheduledEndTime =
-        appointmentDate.getTime() +
-        (row.duration_min ?? 30) * 60_000;
+      // "Missed" is derived from the scheduled window (start + the
+      // practitioner's own slot duration + buffer — the same dynamic cutoff
+      // the doctor's queue and the notifications sweep use), not just the
+      // start time, so a slot in progress never flashes as missed. Deriving
+      // it from immutable stored fields (date/time/practitioner settings/
+      // status) instead of a separate write keeps it stable across refreshes
+      // even before the async no_show job runs.
+      // Only an appointment the two sides were never in together can be
+      // missed — an in-session one stays live however long it runs.
+      // An in-clinic patient already marked arrived waits for the doctor
+      // instead: they stay "Arrived" here until a sweep (doctor's queue /
+      // notifications) or staff close the appointment (see isPastMissedDeadline).
+      const isPastCutoff = isPastMissedDeadline(row, {
+        slotDurationMin: practitioner?.slot_duration_min,
+        bufferMin: practitioner?.buffer_min,
+      });
+      const arrived = isArrivedClinicPatient(row);
 
       if (row.status === "cancelled") {
         uiStatus = "cancelled";
@@ -1103,12 +1314,34 @@ export class AppointmentsService {
         uiStatus = "past";
         pastOutcome = "completed";
       } else if (
+        isAwaitingNotes(row.status, row.video_status, row.session_ended_at)
+      ) {
+        uiStatus = "past";
+        pastOutcome = "awaiting_notes";
+      } else if (
         row.status === "no_show" ||
-        scheduledEndTime < Date.now()
+        isPastCutoff
       ) {
         uiStatus = "past";
         pastOutcome = "missed";
+        missedBy = isMissedBy(row.missed_by) ? row.missed_by : undefined;
+        patientLeft = didPatientLeave(row.missed_by, row.patient_joined_at);
       }
+
+      const inSession = uiStatus === "upcoming" && row.status === "in_session";
+      const hasArrived = uiStatus === "upcoming" && arrived;
+
+      const expiresAtLabel =
+        uiStatus === "upcoming" && !inSession && !hasArrived
+          ? new Date(
+            getAppointmentCutoffMs(
+              row.scheduled_date,
+              row.scheduled_time,
+              practitioner?.slot_duration_min,
+              practitioner?.buffer_min
+            )
+          ).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })
+          : undefined;
 
       const consultation = getFirst(
         row.consultation,
@@ -1135,6 +1368,10 @@ export class AppointmentsService {
         mode,
         status: uiStatus,
         pastOutcome,
+        missedBy,
+        patientLeft,
+        inSession,
+        arrived: hasArrived,
         fee,
         duration: row.duration_min
           ? `${row.duration_min} min`
@@ -1146,6 +1383,7 @@ export class AppointmentsService {
           row.cancellation_reason ?? undefined,
         refunded: row.status === "cancelled",
         reminder: false,
+        expiresAtLabel,
       };
     });
   }

@@ -5,6 +5,8 @@ import {
   createAppointmentSchema,
   createFollowUpAppointmentSchema,
   cancelAppointmentSchema,
+  appointmentIdParamSchema,
+  closeClinicAppointmentSchema,
   videoAppointmentIdParamSchema,
   updateVideoStatusSchema,
 } from "../service/appointments.service";
@@ -221,6 +223,171 @@ export async function cancelAppointmentController(
   return apiSuccess(
     null,
     "Appointment cancelled successfully",
+  );
+}
+
+/**
+ * PATCH /api/appointments?action=mark-arrived&appointmentId=...
+ *
+ * Reception / the practitioner marks an in-clinic patient as arrived.
+ */
+export async function markClinicArrivedController(
+  req: NextRequest,
+  appointmentId: string,
+) {
+  const auth = await requireAuth(req);
+
+  requirePermission(
+    auth,
+    PERMISSIONS.APPOINTMENTS_UPDATE,
+  );
+
+  const parsedParams =
+    appointmentIdParamSchema.safeParse({
+      id: appointmentId,
+    });
+
+  if (!parsedParams.success) {
+    throw new ValidationError(
+      "Invalid appointment ID",
+      parsedParams.error.format(),
+    );
+  }
+
+  await AppointmentsService.markClinicArrived(
+    auth,
+    parsedParams.data.id,
+  );
+
+  await writeAuditLog({
+    userId: auth.id,
+    role: auth.role,
+    action: "mark_clinic_patient_arrived",
+    module: "appointments",
+    recordId: parsedParams.data.id,
+    ipAddress: getRequestIp(req),
+    userAgent: getRequestUserAgent(req),
+  });
+
+  return apiSuccess(
+    null,
+    "Patient marked as arrived",
+  );
+}
+
+/**
+ * PATCH /api/appointments?action=close-arrived&appointmentId=...
+ *
+ * Closes an arrived in-clinic appointment that won't be seen today.
+ *
+ * Body: { "reason": "doctor_unavailable" | "patient_left" }
+ */
+export async function closeArrivedClinicAppointmentController(
+  req: NextRequest,
+  appointmentId: string,
+) {
+  const auth = await requireAuth(req);
+
+  requirePermission(
+    auth,
+    PERMISSIONS.APPOINTMENTS_UPDATE,
+  );
+
+  const parsedParams =
+    appointmentIdParamSchema.safeParse({
+      id: appointmentId,
+    });
+
+  if (!parsedParams.success) {
+    throw new ValidationError(
+      "Invalid appointment ID",
+      parsedParams.error.format(),
+    );
+  }
+
+  const body: unknown = await req.json();
+
+  const parsedBody =
+    closeClinicAppointmentSchema.safeParse(body);
+
+  if (!parsedBody.success) {
+    throw new ValidationError(
+      "Invalid close reason",
+      parsedBody.error.format(),
+    );
+  }
+
+  await AppointmentsService.closeArrivedClinicAppointment(
+    auth,
+    parsedParams.data.id,
+    parsedBody.data.reason,
+  );
+
+  await writeAuditLog({
+    userId: auth.id,
+    role: auth.role,
+    action: "close_arrived_clinic_appointment",
+    module: "appointments",
+    recordId: parsedParams.data.id,
+    ipAddress: getRequestIp(req),
+    userAgent: getRequestUserAgent(req),
+    metadata: {
+      reason: parsedBody.data.reason,
+    },
+  });
+
+  return apiSuccess(
+    null,
+    "Appointment closed",
+  );
+}
+
+/**
+ * PATCH /api/appointments?action=start-consult&appointmentId=...
+ *
+ * The practitioner starts an in-clinic consultation (checks the patient in).
+ */
+export async function startClinicConsultController(
+  req: NextRequest,
+  appointmentId: string,
+) {
+  const auth = await requireAuth(req);
+
+  requirePermission(
+    auth,
+    PERMISSIONS.APPOINTMENTS_UPDATE,
+  );
+
+  const parsedParams =
+    appointmentIdParamSchema.safeParse({
+      id: appointmentId,
+    });
+
+  if (!parsedParams.success) {
+    throw new ValidationError(
+      "Invalid appointment ID",
+      parsedParams.error.format(),
+    );
+  }
+
+  await AppointmentsService.startClinicConsult(
+    auth,
+    parsedParams.data.id,
+  );
+
+  await writeAuditLog({
+    userId: auth.id,
+    role: auth.role,
+    action: "start_clinic_consultation",
+    module: "appointments",
+    recordId: parsedParams.data.id,
+    ipAddress: getRequestIp(req),
+    userAgent: getRequestUserAgent(req),
+  });
+
+  return apiSuccess(
+    null,
+    "Consultation started",
   );
 }
 

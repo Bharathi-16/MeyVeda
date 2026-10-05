@@ -55,7 +55,7 @@ export default function HomePage() {
   const router = useRouter();
   const { user } = useAuth();
   const displayName = user?.name?.trim() || "there";
-  
+
   const [greeting, setGreeting] = useState("Good morning");
 
   useEffect(() => {
@@ -117,15 +117,11 @@ export default function HomePage() {
     return isNaN(parsedTime) ? Infinity : parsedTime;
   };
 
-  const currentNow = new Date().getTime();
-
+  // "upcoming" already means still joinable: the backend keeps a slot
+  // upcoming until its cutoff (start + slot duration + buffer), and for as
+  // long as it's in session — so don't drop it here once the start time passes.
   const upcomingAppointments = (appointments ?? [])
-    .filter((a) => {
-      if (a.status !== "upcoming") return false;
-      const apptTime = parseApptDate(a.date);
-      if (apptTime < currentNow) return false;
-      return true;
-    })
+    .filter((a) => a.status === "upcoming")
     .sort((a, b) => {
       const dateA = parseApptDate(a.date);
       const dateB = parseApptDate(b.date);
@@ -134,16 +130,19 @@ export default function HomePage() {
 
   const hasUpcoming = upcomingAppointments.length > 0;
   const nextUpcoming = hasUpcoming ? upcomingAppointments[0] : null;
+  // Join Room / Waiting Room only make sense for a video consultation — an
+  // in-clinic visit has no room to join.
+  const nextIsVideo = ENABLE_VIDEO_CONSULTATION && nextUpcoming?.mode === "video";
 
   const nextUpcomingCall = upcomingCalls?.[0];
   let showBanner = false;
   let bannerMessage = "";
 
   if (nextUpcomingCall) {
-    const callDate = nextUpcomingCall.isoDateTime 
+    const callDate = nextUpcomingCall.isoDateTime
       ? new Date(nextUpcomingCall.isoDateTime)
       : new Date(`${nextUpcomingCall.rawDate || nextUpcomingCall.date}T10:00:00`);
-      
+
     const diffDays = Math.ceil((callDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
 
     if (diffDays >= 0 && diffDays <= 3) {
@@ -239,10 +238,10 @@ export default function HomePage() {
           )}
         </div>
         {nextUpcoming && (
-          <Link href={ENABLE_VIDEO_CONSULTATION ? `/consult?id=${nextUpcoming.consultationId || nextUpcoming.id}` : "/appointments"}>
+          <Link href={nextIsVideo ? `/consult?id=${nextUpcoming.consultationId || nextUpcoming.id}` : "/appointments"}>
             <div className="flex items-center gap-2 bg-gradient-to-r from-herb-green to-herb-green-light text-white px-5 py-3 rounded-2xl text-sm font-semibold hover:shadow-lg hover:opacity-95 transition-all cursor-pointer shadow-sm active:scale-98">
-              <span>{ENABLE_VIDEO_CONSULTATION ? "📹" : "🏥"}</span>
-              <span>{ENABLE_VIDEO_CONSULTATION ? "Join Today's Consult" : "View Today's Appointment"}</span>
+              <span>{nextIsVideo ? "📹" : "🏥"}</span>
+              <span>{nextIsVideo ? "Join Today's Consult" : "View Today's Appointment"}</span>
             </div>
           </Link>
         )}
@@ -278,8 +277,14 @@ export default function HomePage() {
                       </div>
                     </div>
 
+                    {nextUpcoming.expiresAtLabel && (
+                      <p className="mt-2 text-[11px] text-white/75 font-medium">
+                        {nextIsVideo ? "Join" : "Arrive at the clinic"} before {nextUpcoming.expiresAtLabel}, or this slot will be marked missed.
+                      </p>
+                    )}
+
                     <div className="mt-6 flex items-center gap-3 flex-wrap">
-                      {ENABLE_VIDEO_CONSULTATION ? (
+                      {nextIsVideo ? (
                         <>
                           <button
                             onClick={async () => {
@@ -309,11 +314,13 @@ export default function HomePage() {
                           </button>
                         </Link>
                       )}
-                      <Link href="/appointments">
-                        <button className="px-5 py-2.5 bg-transparent text-white/90 text-xs font-bold rounded-xl hover:bg-white/10 hover:text-white transition-all active:scale-95">
-                          Reschedule
-                        </button>
-                      </Link>
+                      {!nextUpcoming.inSession && !nextUpcoming.arrived && (
+                        <Link href="/appointments">
+                          <button className="px-5 py-2.5 bg-transparent text-white/90 text-xs font-bold rounded-xl hover:bg-white/10 hover:text-white transition-all active:scale-95">
+                            Reschedule
+                          </button>
+                        </Link>
+                      )}
                     </div>
                   </div>
 
@@ -516,181 +523,181 @@ export default function HomePage() {
                   </a>
                 </div>
 
-              {/* Patient Details & Clinical Summary */}
-              <div className="bg-[#F8FAFC] border border-slate-200/60 rounded-2xl p-5 grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
-                <div>
-                  <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
-                    <User className="w-3.5 h-3.5" /> Patient Details
-                  </h4>
-                  <div className="space-y-2">
-                    <p className="text-slate-600">Name: <span className="font-semibold text-slate-800">{profile?.name || user?.name}</span></p>
-                    <p className="text-slate-600">Age: <span className="font-semibold text-slate-800">{profile?.age || "N/A"} y</span></p>
-                    <p className="text-slate-600">Gender: <span className="font-semibold text-slate-800 capitalize">{profile?.gender || "N/A"}</span></p>
-                    {activeConsult.id && (
-                      <p className="text-slate-600 font-mono text-xs">ID: <span className="font-semibold text-slate-800 uppercase">{activeConsult.id.split('-')[0]}</span></p>
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
-                    <FileText className="w-3.5 h-3.5" /> Clinical Summary
-                  </h4>
-                  <div className="space-y-3">
-                    <div>
-                      <p className="text-xs text-slate-500 font-semibold">Chief Complaint</p>
-                      <p className="text-slate-800 font-medium mt-0.5">
-                        {chiefComplaints.join(", ") || "No complaints recorded."}
-                      </p>
+                {/* Patient Details & Clinical Summary */}
+                <div className="bg-[#F8FAFC] border border-slate-200/60 rounded-2xl p-5 grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
+                  <div>
+                    <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
+                      <User className="w-3.5 h-3.5" /> Patient Details
+                    </h4>
+                    <div className="space-y-2">
+                      <p className="text-slate-600">Name: <span className="font-semibold text-slate-800">{profile?.name || user?.name}</span></p>
+                      <p className="text-slate-600">Age: <span className="font-semibold text-slate-800">{profile?.age || "N/A"} y</span></p>
+                      <p className="text-slate-600">Gender: <span className="font-semibold text-slate-800 capitalize">{profile?.gender || "N/A"}</span></p>
+                      {activeConsult.id && (
+                        <p className="text-slate-600 font-mono text-xs">ID: <span className="font-semibold text-slate-800 uppercase">{activeConsult.id.split('-')[0]}</span></p>
+                      )}
                     </div>
-                    {emr?.history_present && (
+                  </div>
+
+                  <div>
+                    <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5" /> Clinical Summary
+                    </h4>
+                    <div className="space-y-3">
                       <div>
-                        <p className="text-xs text-slate-500 font-semibold">History of Present Illness</p>
-                        <p className="text-slate-700 leading-relaxed mt-0.5 text-xs font-medium">
-                          {emr.history_present}
+                        <p className="text-xs text-slate-500 font-semibold">Chief Complaint</p>
+                        <p className="text-slate-800 font-medium mt-0.5">
+                          {chiefComplaints.join(", ") || "No complaints recorded."}
                         </p>
                       </div>
+                      {emr?.history_present && (
+                        <div>
+                          <p className="text-xs text-slate-500 font-semibold">History of Present Illness</p>
+                          <p className="text-slate-700 leading-relaxed mt-0.5 text-xs font-medium">
+                            {emr.history_present}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Prescribed Formulations */}
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900 mb-3 flex items-center gap-2">
+                    <Pill className="w-4 h-4 text-emerald-500" />
+                    Prescribed Medicines
+                  </h4>
+                  {rxItems.length > 0 ? (
+                    <div className="overflow-x-auto rounded-[20px] border border-slate-200/80 bg-white shadow-sm hide-scrollbar">
+                      <table className="w-full text-left border-collapse min-w-[700px]">
+                        <thead className="sticky top-0 bg-white/95 backdrop-blur-sm z-10">
+                          <tr className="border-b border-slate-200">
+                            <th className="p-4 font-bold text-slate-500 text-[13px] bg-white border-r border-slate-200">Medicine</th>
+                            <th className="p-3 text-center border-r border-slate-200">
+                              <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold border border-emerald-200">
+                                <Sunrise size={14} className="opacity-75" /> Morning
+                              </div>
+                            </th>
+                            <th className="p-3 text-center border-r border-slate-200">
+                              <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold border border-emerald-200">
+                                <Sun size={14} className="opacity-75" /> Afternoon
+                              </div>
+                            </th>
+                            <th className="p-3 text-center border-r border-slate-200">
+                              <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold border border-emerald-200">
+                                <Sunset size={14} className="opacity-75" /> Evening
+                              </div>
+                            </th>
+                            <th className="p-3 text-center border-r border-slate-200">
+                              <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold border border-emerald-200">
+                                <Moon size={14} className="opacity-75" /> Night
+                              </div>
+                            </th>
+                            <th className="p-3 text-center border-r border-slate-200">
+                              <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold border border-emerald-200">
+                                <UtensilsCrossed size={14} className="opacity-75" /> Before Food
+                              </div>
+                            </th>
+                            <th className="p-3 text-center">
+                              <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold border border-emerald-200">
+                                <Utensils size={14} className="opacity-75" /> After Food
+                              </div>
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200">
+                          {rxItems.map((item: any, idx: number) => {
+                            const { m, a, e, n } = parseFrequency(item.frequency);
+                            const { bf, af } = parseTiming(item.time_of_intake || item.anupana);
+                            return (
+                              <tr key={idx} className="hover:bg-slate-50/80 transition-colors group">
+                                <td className="p-4 align-top max-w-[200px] border-r border-slate-200">
+                                  <div className="font-semibold text-[16px] text-slate-800 tracking-tight leading-tight">
+                                    {item.medicine_name}
+                                  </div>
+                                  <div className="text-[13px] text-slate-500 font-medium mt-0.5">
+                                    {item.classical_type || "Tablet"} ({item.dose || "—"})
+                                  </div>
+                                  {(item.special_instructions || item.duration_days) && (
+                                    <div className="mt-2.5 text-[12px] text-slate-500 bg-slate-50 p-2.5 rounded-xl border border-slate-200 inline-block w-full">
+                                      {item.duration_days && <div className="font-semibold text-slate-600 flex items-center gap-1.5"><Calendar size={13} /> {item.duration_days} Days</div>}
+                                      {item.special_instructions && <div className="flex items-start gap-1.5 mt-1.5 text-slate-400 italic"><FileText size={13} className="shrink-0 mt-0.5" /> {item.special_instructions}</div>}
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="p-4 text-center align-middle border-r border-slate-200">
+                                  {m && <Check size={20} className="text-emerald-500 mx-auto opacity-90 drop-shadow-sm group-hover:scale-110 transition-transform" strokeWidth={3} />}
+                                </td>
+                                <td className="p-4 text-center align-middle border-r border-slate-200">
+                                  {a && <Check size={20} className="text-emerald-500 mx-auto opacity-90 drop-shadow-sm group-hover:scale-110 transition-transform" strokeWidth={3} />}
+                                </td>
+                                <td className="p-4 text-center align-middle border-r border-slate-200">
+                                  {e && <Check size={20} className="text-emerald-500 mx-auto opacity-90 drop-shadow-sm group-hover:scale-110 transition-transform" strokeWidth={3} />}
+                                </td>
+                                <td className="p-4 text-center align-middle border-r border-slate-200">
+                                  {n && <Check size={20} className="text-emerald-500 mx-auto opacity-90 drop-shadow-sm group-hover:scale-110 transition-transform" strokeWidth={3} />}
+                                </td>
+                                <td className="p-4 text-center align-middle border-r border-slate-200">
+                                  {bf && <Check size={20} className="text-emerald-500 mx-auto opacity-90 drop-shadow-sm group-hover:scale-110 transition-transform" strokeWidth={3} />}
+                                </td>
+                                <td className="p-4 text-center align-middle">
+                                  {af && <Check size={20} className="text-emerald-500 mx-auto opacity-90 drop-shadow-sm group-hover:scale-110 transition-transform" strokeWidth={3} />}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="p-5 text-center bg-slate-50 border border-dashed border-slate-200 rounded-[20px]">
+                      <p className="text-[13px] text-slate-400 font-medium">No formulations prescribed.</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Instructions / Careplan */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+                  {/* Dietary Advice */}
+                  <div className="bg-amber-50/20 border border-amber-100 rounded-2xl p-5">
+                    <h4 className="text-xs font-bold text-amber-800 uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
+                      🥗 Dietary & Nutrition Advice
+                    </h4>
+                    {prescription?.dietary_advice ? (
+                      <div
+                        className="text-xs text-slate-700 leading-relaxed font-medium prose prose-sm max-w-none [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:mb-1 [&_p]:mb-3 last:[&_p]:mb-0"
+                        dangerouslySetInnerHTML={{ __html: prescription.dietary_advice }}
+                      />
+                    ) : (
+                      <p className="text-xs text-slate-400 italic">No specific dietary advice recorded.</p>
+                    )}
+                  </div>
+
+                  {/* Lifestyle Advice */}
+                  <div className="bg-emerald-50/20 border border-emerald-100 rounded-2xl p-5">
+                    <h4 className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
+                      🧘 Lifestyle & Exercise Advice
+                    </h4>
+                    {prescription?.lifestyle_advice ? (
+                      <p className="text-xs text-slate-700 leading-relaxed font-medium">
+                        {prescription.lifestyle_advice.replace(/\[Upcoming Session Fixed: .*?\]/g, '').trim() || "No specific lifestyle advice recorded."}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-slate-400 italic">No specific lifestyle advice recorded.</p>
                     )}
                   </div>
                 </div>
-              </div>
 
-              {/* Prescribed Formulations */}
-              <div>
-                <h4 className="text-sm font-bold text-slate-900 mb-3 flex items-center gap-2">
-                  <Pill className="w-4 h-4 text-emerald-500" />
-                  Prescribed Medicines
-                </h4>
-                {rxItems.length > 0 ? (
-                  <div className="overflow-x-auto rounded-[20px] border border-slate-200/80 bg-white shadow-sm hide-scrollbar">
-                    <table className="w-full text-left border-collapse min-w-[700px]">
-                      <thead className="sticky top-0 bg-white/95 backdrop-blur-sm z-10">
-                        <tr className="border-b border-slate-200">
-                          <th className="p-4 font-bold text-slate-500 text-[13px] bg-white border-r border-slate-200">Medicine</th>
-                          <th className="p-3 text-center border-r border-slate-200">
-                            <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold border border-emerald-200">
-                              <Sunrise size={14} className="opacity-75" /> Morning
-                            </div>
-                          </th>
-                          <th className="p-3 text-center border-r border-slate-200">
-                            <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold border border-emerald-200">
-                              <Sun size={14} className="opacity-75" /> Afternoon
-                            </div>
-                          </th>
-                          <th className="p-3 text-center border-r border-slate-200">
-                            <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold border border-emerald-200">
-                              <Sunset size={14} className="opacity-75" /> Evening
-                            </div>
-                          </th>
-                          <th className="p-3 text-center border-r border-slate-200">
-                            <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold border border-emerald-200">
-                              <Moon size={14} className="opacity-75" /> Night
-                            </div>
-                          </th>
-                          <th className="p-3 text-center border-r border-slate-200">
-                            <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold border border-emerald-200">
-                              <UtensilsCrossed size={14} className="opacity-75" /> Before Food
-                            </div>
-                          </th>
-                          <th className="p-3 text-center">
-                            <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold border border-emerald-200">
-                              <Utensils size={14} className="opacity-75" /> After Food
-                            </div>
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-200">
-                        {rxItems.map((item: any, idx: number) => {
-                          const { m, a, e, n } = parseFrequency(item.frequency);
-                          const { bf, af } = parseTiming(item.time_of_intake || item.anupana);
-                          return (
-                            <tr key={idx} className="hover:bg-slate-50/80 transition-colors group">
-                              <td className="p-4 align-top max-w-[200px] border-r border-slate-200">
-                                <div className="font-semibold text-[16px] text-slate-800 tracking-tight leading-tight">
-                                  {item.medicine_name}
-                                </div>
-                                <div className="text-[13px] text-slate-500 font-medium mt-0.5">
-                                  {item.classical_type || "Tablet"} ({item.dose || "—"})
-                                </div>
-                                {(item.special_instructions || item.duration_days) && (
-                                  <div className="mt-2.5 text-[12px] text-slate-500 bg-slate-50 p-2.5 rounded-xl border border-slate-200 inline-block w-full">
-                                    {item.duration_days && <div className="font-semibold text-slate-600 flex items-center gap-1.5"><Calendar size={13}/> {item.duration_days} Days</div>}
-                                    {item.special_instructions && <div className="flex items-start gap-1.5 mt-1.5 text-slate-400 italic"><FileText size={13} className="shrink-0 mt-0.5"/> {item.special_instructions}</div>}
-                                  </div>
-                                )}
-                              </td>
-                              <td className="p-4 text-center align-middle border-r border-slate-200">
-                                {m && <Check size={20} className="text-emerald-500 mx-auto opacity-90 drop-shadow-sm group-hover:scale-110 transition-transform" strokeWidth={3} />}
-                              </td>
-                              <td className="p-4 text-center align-middle border-r border-slate-200">
-                                {a && <Check size={20} className="text-emerald-500 mx-auto opacity-90 drop-shadow-sm group-hover:scale-110 transition-transform" strokeWidth={3} />}
-                              </td>
-                              <td className="p-4 text-center align-middle border-r border-slate-200">
-                                {e && <Check size={20} className="text-emerald-500 mx-auto opacity-90 drop-shadow-sm group-hover:scale-110 transition-transform" strokeWidth={3} />}
-                              </td>
-                              <td className="p-4 text-center align-middle border-r border-slate-200">
-                                {n && <Check size={20} className="text-emerald-500 mx-auto opacity-90 drop-shadow-sm group-hover:scale-110 transition-transform" strokeWidth={3} />}
-                              </td>
-                              <td className="p-4 text-center align-middle border-r border-slate-200">
-                                {bf && <Check size={20} className="text-emerald-500 mx-auto opacity-90 drop-shadow-sm group-hover:scale-110 transition-transform" strokeWidth={3} />}
-                              </td>
-                              <td className="p-4 text-center align-middle">
-                                {af && <Check size={20} className="text-emerald-500 mx-auto opacity-90 drop-shadow-sm group-hover:scale-110 transition-transform" strokeWidth={3} />}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="p-5 text-center bg-slate-50 border border-dashed border-slate-200 rounded-[20px]">
-                    <p className="text-[13px] text-slate-400 font-medium">No formulations prescribed.</p>
+                {/* Follow-up Section */}
+                {prescription?.followup_date && (
+                  <div className="bg-indigo-50/30 border border-indigo-100/50 rounded-2xl p-4 flex items-center gap-3">
+                    <Calendar className="w-5 h-5 text-indigo-500" />
+                    <div className="text-xs font-medium text-indigo-900">
+                      Next Follow-up Consultation Scheduled On: <span className="font-bold text-indigo-700">{formatDate(prescription.followup_date)}</span>
+                    </div>
                   </div>
                 )}
-              </div>
-
-              {/* Instructions / Careplan */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-                {/* Dietary Advice */}
-                <div className="bg-amber-50/20 border border-amber-100 rounded-2xl p-5">
-                  <h4 className="text-xs font-bold text-amber-800 uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
-                    🥗 Dietary & Nutrition Advice
-                  </h4>
-                  {prescription?.dietary_advice ? (
-                    <div
-                      className="text-xs text-slate-700 leading-relaxed font-medium prose prose-sm max-w-none [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:mb-1 [&_p]:mb-3 last:[&_p]:mb-0"
-                      dangerouslySetInnerHTML={{ __html: prescription.dietary_advice }}
-                    />
-                  ) : (
-                    <p className="text-xs text-slate-400 italic">No specific dietary advice recorded.</p>
-                  )}
-                </div>
-
-                {/* Lifestyle Advice */}
-                <div className="bg-emerald-50/20 border border-emerald-100 rounded-2xl p-5">
-                  <h4 className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
-                    🧘 Lifestyle & Exercise Advice
-                  </h4>
-                  {prescription?.lifestyle_advice ? (
-                    <p className="text-xs text-slate-700 leading-relaxed font-medium">
-                      {prescription.lifestyle_advice.replace(/\[Upcoming Session Fixed: .*?\]/g, '').trim() || "No specific lifestyle advice recorded."}
-                    </p>
-                  ) : (
-                    <p className="text-xs text-slate-400 italic">No specific lifestyle advice recorded.</p>
-                  )}
-                </div>
-              </div>
-
-              {/* Follow-up Section */}
-              {prescription?.followup_date && (
-                <div className="bg-indigo-50/30 border border-indigo-100/50 rounded-2xl p-4 flex items-center gap-3">
-                  <Calendar className="w-5 h-5 text-indigo-500" />
-                  <div className="text-xs font-medium text-indigo-900">
-                    Next Follow-up Consultation Scheduled On: <span className="font-bold text-indigo-700">{formatDate(prescription.followup_date)}</span>
-                  </div>
-                </div>
-              )}
               </section>
             </div>
           )}

@@ -316,6 +316,8 @@ export default function PatientIntakeClient() {
     { id: 1, name: "", form: "Tablet", dose: "", frequency: "Morning", timing: "After Food", duration: "", instructions: "" }
   ]);
   const [prescriptionNotes, setPrescriptionNotes] = useState("");
+  // Advice/notes-only consultation — completes without any medicines.
+  const [noPrescription, setNoPrescription] = useState(false);
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -573,6 +575,12 @@ export default function PatientIntakeClient() {
   };
 
   const handleSaveConsultation = async () => {
+    const hasMedicine = medicines.some((m) => m.name.trim());
+    if (!noPrescription && !hasMedicine) {
+      alert('Add at least one medicine, or tick "No prescription needed" to complete this consultation with notes only.');
+      return;
+    }
+
     setIsSaving(true);
     try {
       const reportUrls: string[] = [];
@@ -608,7 +616,8 @@ export default function PatientIntakeClient() {
         },
         bloodGroup,
         address,
-        medicines,
+        medicines: noPrescription ? [] : medicines,
+        noPrescription,
         prescriptionNotes,
         paymentMethod,
         followUpInstructions: upcomingCallDate && upcomingCallTime
@@ -914,6 +923,20 @@ export default function PatientIntakeClient() {
 
         {/* Section 5: Unified Prescription Card */}
         <SectionCard title="Prescription & Notes" icon={Syringe}>
+          <label className="mb-4 flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 bg-[#F8FAFC] px-4 py-3">
+            <input
+              type="checkbox"
+              checked={noPrescription}
+              onChange={(e) => setNoPrescription(e.target.checked)}
+              className="mt-0.5 h-4 w-4 accent-indigo-600"
+            />
+            <span>
+              <span className="block text-sm font-semibold text-gray-800">No prescription needed</span>
+              <span className="block text-xs text-gray-500">Complete this consultation with advice and notes only — no medicines.</span>
+            </span>
+          </label>
+
+          {!noPrescription && (
           <div className="bg-white border border-gray-200 rounded-[16px] overflow-hidden shadow-sm mb-6">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
@@ -1001,6 +1024,7 @@ export default function PatientIntakeClient() {
               </button>
             </div>
           </div>
+          )}
 
           {/* Unified Prescription Notes Area inside the same card */}
           <div>
@@ -1020,7 +1044,7 @@ export default function PatientIntakeClient() {
                 suppressContentEditableWarning
                 onBlur={(e) => setPrescriptionNotes(e.currentTarget.innerHTML)}
                 className="w-full px-6 py-5 text-sm outline-none resize-none leading-relaxed text-gray-700 min-h-[150px] [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:mb-1"
-              >*continue of 3. src/app/(portal)/pro/patient/[id]/client.tsx* 
+              >
                 <ul>
                   <li>Continue medicines regularly.</li>
                   <li>Take with warm water.</li>

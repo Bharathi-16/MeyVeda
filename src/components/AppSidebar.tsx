@@ -27,7 +27,8 @@ import {
   LogOut,
   Users,
   MessageSquare,
-  UsersRound
+  UsersRound,
+  GraduationCap
 } from "lucide-react";
 import React from "react";
 
@@ -81,6 +82,11 @@ const PRACTITIONER_NAV: NavItem[] = [
     icon: UsersRound,
     label: "Community",
   },
+  {
+    href: "/pro/learning",
+    icon: GraduationCap,
+    label: "MeyVeda Learning",
+  },
   "separator",
   {
     href: "/pro/availability",
@@ -117,7 +123,7 @@ export function AppSidebar({ open, onClose }: AppSidebarProps) {
   const isAssistant = user?.role === "assistant";
   const showProNav = isPractitioner || isAssistant;
   const navItems = showProNav
-    ? PRACTITIONER_NAV.filter((item) => !(isAssistant && item !== "separator" && (item.href === "/pro/assistants" || item.href === "/pro/community")))
+    ? PRACTITIONER_NAV.filter((item) => !(isAssistant && item !== "separator" && (item.href === "/pro/assistants" || item.href === "/pro/community" || item.href === "/pro/learning")))
     : PATIENT_NAV;
 
   const inboxHref = showProNav ? "/pro/inbox" : "/messages";

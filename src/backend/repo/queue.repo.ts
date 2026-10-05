@@ -1,4 +1,12 @@
 import { createClient } from "@/shared/db/supabase.server";
+import {
+  didPatientLeave,
+  isAwaitingNotes,
+  isMissableStatus,
+  isMissedBy,
+  isPastMissedDeadline,
+} from "@/shared/appointments/attendance";
+import { AppointmentAttendanceRepository } from "./appointment-attendance.repo";
 
 function formatTime(timeStr: string): string {
   if (!timeStr) return "";
@@ -37,9 +45,17 @@ export class QueueRepository {
         mode,
         status,
         reason_for_visit,
+        scheduled_date,
         scheduled_time,
         checked_in_at,
         family_member_id,
+        patient_id,
+        practitioner_id,
+        patient_joined_at,
+        practitioner_joined_at,
+        missed_by,
+        video_status,
+        session_ended_at,
         patient:patients (
           id,
           user_id,
@@ -80,16 +96,14 @@ export class QueueRepository {
       let missedAppointments: any[] = [];
 
       if (isPastDate) {
-        // A past date that never got resolved: everything still pending is missed.
-        missedAppointments = appointments.filter(
-          (appt: any) => appt.status !== "completed" && appt.status !== "no_show" && appt.status !== "cancelled"
-        );
+        // A past date that never got resolved: anything still missable is missed.
+        // In-session / awaiting-notes appointments happened, so they never are.
+        missedAppointments = appointments.filter((appt: any) => isMissableStatus(appt.status));
       } else {
-        // Same day: a booked slot stays "Waiting" until the next slot's start
-        // time (this slot's own scheduled_time + the practitioner's slot
-        // duration + buffer) — only then, if the doctor never checked the
-        // patient in, does it flip to missed. Anything already checked-in or
-        // in-session is being actively handled and is left alone.
+        // Same day: a booked slot stays open until its own scheduled_time + the
+        // practitioner's slot duration + buffer — only then, if the patient and
+        // doctor were never in the consultation together, does it flip to
+        // missed. Once both have joined (in_session) it is left alone.
         const { data: settingsRow } = await supabase
           .from("practitioners")
           .select("slot_duration_min, buffer_min")
@@ -97,74 +111,27 @@ export class QueueRepository {
           .maybeSingle();
         const durationMin = settingsRow?.slot_duration_min || 20;
         const bufferMin = settingsRow?.buffer_min || 0;
-        const now = Date.now();
+
+        // A clinic patient already marked arrived keeps waiting for the doctor
+        // past the cutoff — until the doctor's working hours for the day end
+        // (see isPastMissedDeadline).
+        const workingEndTime = await AppointmentAttendanceRepository.getWorkingEndTime(practitionerId, targetDate);
 
         missedAppointments = appointments.filter((appt: any) => {
-          if (appt.status !== "scheduled" || !appt.scheduled_time) return false;
-          const [h, m] = appt.scheduled_time.split(":").map(Number);
-          const slotStart = new Date(`${targetDate}T00:00:00`);
-          slotStart.setHours(h, m, 0, 0);
-          const cutoff = slotStart.getTime() + (durationMin + bufferMin) * 60000;
-          return now > cutoff;
+          if (!appt.scheduled_time) return false;
+          return isPastMissedDeadline(
+            { ...appt, scheduled_date: targetDate },
+            { slotDurationMin: durationMin, bufferMin, workingEndTime },
+          );
         });
       }
 
-      if (missedAppointments.length > 0) {
-        let practitionerName: string | null = null;
-        const { data: practitionerRow } = await supabase
-          .from("practitioners")
-          .select("full_name")
-          .eq("id", practitionerId)
-          .maybeSingle();
-        practitionerName = practitionerRow?.full_name ?? null;
-
-        await Promise.all(
-          missedAppointments.map(async (appt: any) => {
-            // Conditional update ensures only one caller ever "wins" the
-            // transition for a given appointment, so a notification is
-            // created at most once even if this runs concurrently.
-            // The DB enum (appointment_status) doesn't have a "missed" value —
-            // its terminal label for this is "no_show". The API still reports
-            // it to the frontend as "missed" (see mappedStatus below).
-            const { data: updated, error: updateError } = await supabase
-              .from("appointments")
-              .update({ status: "no_show" })
-              .eq("id", appt.id)
-              .eq("status", appt.status)
-              .select("id");
-
-            if (updateError) {
-              console.error("[QueueRepository] Error marking appointment missed:", updateError.message);
-              return;
-            }
-            if (!updated || updated.length === 0) return;
-
-            appt.status = "no_show";
-
-            const patientUserId = appt.patient?.user_id;
-            if (patientUserId) {
-              const apptTime = formatTime(appt.scheduled_time);
-              const formattedDate = new Date(`${targetDate}T00:00:00`).toLocaleDateString("en-US", {
-                month: "long",
-                day: "numeric",
-                year: "numeric",
-              });
-
-              const { error: notifError } = await supabase.from("notifications").insert({
-                user_id: patientUserId,
-                title: "Appointment Missed",
-                body: `Your appointment with ${practitionerName || "your practitioner"} on ${formattedDate} at ${apptTime} was missed. You can book another appointment if you would like to continue your consultation.`,
-                type: "missed_appointment",
-                is_read: false,
-              });
-
-              if (notifError) {
-                console.error("[QueueRepository] Error inserting missed appointment notification:", notifError.message);
-              }
-            }
-          })
-        );
-      }
+      await Promise.all(
+        missedAppointments.map(async (appt: any) => {
+          const missedBy = await AppointmentAttendanceRepository.markMissed(appt);
+          if (missedBy) appt.missed_by = missedBy;
+        })
+      );
     }
 
     // For completed appointments, the "time" shown should be when the
@@ -225,6 +192,7 @@ export class QueueRepository {
 
       let mappedStatus = "waiting";
       if (appt.status === "checked_in") mappedStatus = "checked-in";
+      else if (isAwaitingNotes(appt.status, appt.video_status, appt.session_ended_at)) mappedStatus = "awaiting-notes";
       else if (appt.status === "in_session") mappedStatus = "in-session";
       else if (appt.status === "completed") mappedStatus = "completed";
       else if (appt.status === "no_show" || appt.status === "missed") mappedStatus = "missed";
@@ -244,6 +212,8 @@ export class QueueRepository {
         time: displayTime,
         mode: appt.mode,
         status: mappedStatus,
+        missedBy: mappedStatus === "missed" && isMissedBy(appt.missed_by) ? appt.missed_by : null,
+        patientLeft: mappedStatus === "missed" && didPatientLeave(appt.missed_by, appt.patient_joined_at),
         waitMins: Math.max(0, waitMins),
         reason: appt.reason_for_visit || "Consultation",
         abha: abhaId,

@@ -1,13 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRealtimeSignal, useRealtimeTopics } from "./use-realtime-signal";
 
-const POLL_MS = 15000;
+// Realtime pushes updates instantly; polling is only a safety net.
+const POLL_MS = 60000;
 
 type InboxThreadLike = { unreadCount?: number; unread?: boolean };
 
 /**
- * Polls the caller's inbox endpoint (pro-inbox for practitioners/assistants,
+ * Loads the caller's inbox endpoint (refreshed live via Realtime) (pro-inbox for practitioners/assistants,
  * patient-inbox for patients) and returns the total number of unread
  * messages across all threads, for the sidebar nav badge.
  */
@@ -40,6 +42,9 @@ export function useUnreadInboxCount(enabled: boolean, endpoint: string): number 
     const interval = setInterval(load, POLL_MS);
     return () => clearInterval(interval);
   }, [enabled, load]);
+
+  const { inbox: inboxTopic } = useRealtimeTopics(enabled);
+  useRealtimeSignal(enabled ? inboxTopic : null, load);
 
   return count;
 }

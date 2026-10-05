@@ -129,21 +129,24 @@ export class MessageRepository {
     );
   }
 
-  static async markRead(consultationId: string, readerRole: "patient" | "practitioner"): Promise<void> {
+  static async markRead(consultationId: string, readerRole: "patient" | "practitioner"): Promise<number> {
     const supabase = await createClient();
     const consultationIds = await this.getRelatedConsultationIds(consultationId);
     const directionToMark = readerRole === "patient" ? "doctor_to_patient" : "patient_to_doctor";
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("bounded_messages")
       .update({ read_at: new Date().toISOString() })
       .in("consultation_id", consultationIds)
       .eq("direction", directionToMark)
-      .is("read_at", null);
+      .is("read_at", null)
+      .select("id");
 
     if (error) {
       console.error("[MessageRepository] Error marking messages read:", error.message);
+      return 0;
     }
+    return data?.length ?? 0;
   }
 
   static async sendMessage(params: {
