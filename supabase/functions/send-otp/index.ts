@@ -1,3 +1,4 @@
+import { SITE_NAME } from "../_shared/site.ts";
 import nodemailer from "nodemailer";
 import { createClient } from "@supabase/supabase-js";
 import { corsHeaders } from "../_shared/cors.ts";
@@ -203,12 +204,12 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
     try {
       const emailResult = await transporter.sendMail({
-        from: `"MeyVeda" <${gmailUser}>`,
+        from: `"${SITE_NAME}" <${gmailUser}>`,
         to: normalizedEmail,
-        subject: "Your MeyVeda OTP verification code",
+        subject: `Your ${SITE_NAME} OTP verification code`,
 
         text: [
-          "Welcome to MeyVeda.",
+          `Welcome to ${SITE_NAME}.`,
           "",
           `Your verification code is: ${generatedOtp}`,
           "",
@@ -218,7 +219,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
           "If you did not request this code, ignore this email.",
           "",
           "Regards,",
-          "MeyVeda Team",
+          `${SITE_NAME} Team`,
         ].join("\n"),
 
         html: `
@@ -251,7 +252,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
                   margin: 0 0 16px;
                   color: #166534;
                 ">
-                  MeyVeda verification
+                  ${SITE_NAME} verification
                 </h2>
 
                 <p style="
@@ -299,7 +300,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
                 <p style="margin-bottom: 0;">
                   Regards,<br />
-                  <strong>MeyVeda Team</strong>
+                  <strong>${SITE_NAME} Team</strong>
                 </p>
               </div>
             </body>

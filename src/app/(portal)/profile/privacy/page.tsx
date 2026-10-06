@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import { useState } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -14,9 +15,9 @@ type ConsentEntry = {
 };
 
 const ACTIVE_CONSENTS: ConsentEntry[] = [
-  { id: "p1", provider: "Dr. Aditi Shastri · MeyVeda", type: "View & prescribe PHR", granted: "15 May 2026", expires: "15 Aug 2026", active: true },
+  { id: "p1", provider: `Dr. Aditi Shastri · ${SITE_NAME}`, type: "View & prescribe PHR", granted: "15 May 2026", expires: "15 Aug 2026", active: true },
   { id: "p2", provider: "Apollo Hospitals · Mumbai", type: "Lab results access", granted: "2 Apr 2026", expires: "2 Jul 2026", active: true },
-  { id: "p3", provider: "MeyVeda AyurSanvaad AI", type: "Anonymised chat context", granted: "1 Jan 2026", expires: "31 Dec 2026", active: false },
+  { id: "p3", provider: `${SITE_NAME} AyurSanvaad AI`, type: "Anonymised chat context", granted: "1 Jan 2026", expires: "31 Dec 2026", active: false },
 ];
 
 type PrivacyToggle = {
@@ -136,7 +137,7 @@ export default function PrivacyPage() {
 
       <div className="bg-ivory-deep rounded-2xl border border-border p-4">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          MeyVeda complies with the Digital Personal Data Protection Act 2023 (DPDPA) and the ABDM Health Data Management Policy. Your consent logs are auditable.
+          {SITE_NAME} complies with the Digital Personal Data Protection Act 2023 (DPDPA) and the ABDM Health Data Management Policy. Your consent logs are auditable.
         </p>
       </div>
     </div>

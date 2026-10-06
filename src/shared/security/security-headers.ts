@@ -61,7 +61,7 @@ function buildCsp(): string {
     "img-src": ["'self'", "data:", "https:", "blob:"],
     "font-src": ["'self'", "data:"],
     "connect-src": connectSrc as string[],
-    // Supabase Storage: MeyVeda Learning shows course PDFs and videos inline (short-lived signed URLs).
+    // Supabase Storage: YurCore Learning shows course PDFs and videos inline (short-lived signed URLs).
     // blob: lets the admin preview a PDF that has just been picked for upload.
     "frame-src": [`https://${jitsiDomain}`, "https://*.jit.si", supabaseOrigin, "blob:"].filter(Boolean) as string[],
     "media-src": ["'self'", "blob:", `https://${jitsiDomain}`, "https://*.jit.si", supabaseOrigin].filter(Boolean) as string[],

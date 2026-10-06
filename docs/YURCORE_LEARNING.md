@@ -1,6 +1,6 @@
-# MeyVeda Learning – course builder
+# YurCore Learning – course builder
 
-Course content is built and stored in MeyVeda: course data in Supabase, files in Supabase Storage.
+Course content is built and stored in YurCore: course data in Supabase, files in Supabase Storage.
 Every course is also a Moodle course, and the course lifecycle is kept in sync (see "Moodle course sync" below).
 Only admins (`admin`, `super_admin`) build courses. Practitioners (`doctor` role with a practitioner profile) are the learners.
 
@@ -25,16 +25,16 @@ All tables have RLS on and are used only by the server (service role).
 
 ## Moodle course sync
 
-`meyveda_learning_courses.id` (uuid) is the MeyVeda course; `moodle_course_id` is the id Moodle returned when the course was created (never assumed equal). Every step changes Moodle first and MeyVeda only after Moodle succeeded:
+`meyveda_learning_courses.id` (uuid) is the YurCore course; `moodle_course_id` is the id Moodle returned when the course was created (never assumed equal). Every step changes Moodle first and YurCore only after Moodle succeeded:
 
-| Action | Moodle | MeyVeda |
+| Action | Moodle | YurCore |
 |---|---|---|
 | Create | `core_course_create_courses` (hidden, default category) | row inserted with `moodle_course_id`; if the insert fails the Moodle course is deleted again |
 | Edit title / description | `core_course_update_courses` (fullname / summary) | row updated |
 | Publish / unpublish | course made visible / hidden | status changed |
 | Delete | `core_course_delete_courses`, then re-read to confirm it is gone. Moodle reports refusals as *warnings* in a successful response; these are checked | only then: course row (sections, content, quizzes, learner records cascade) and its Storage folder |
 
-If a Moodle step fails, the operation stops and nothing in MeyVeda changes, so retrying is safe. A Moodle course that no longer exists (deleted in Moodle directly) counts as already deleted, and the admin list flags such courses. Sections, files and quizzes are stored in MeyVeda only; they are not copied into the Moodle course.
+If a Moodle step fails, the operation stops and nothing in YurCore changes, so retrying is safe. A Moodle course that no longer exists (deleted in Moodle directly) counts as already deleted, and the admin list flags such courses. Sections, files and quizzes are stored in YurCore only; they are not copied into the Moodle course.
 
 ## Files
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_INITIAL, SITE_NAME } from "@/shared/config/site";
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
@@ -12,7 +13,7 @@ const NAV = [
   { href: "/admin/hospitals", label: "Hospitals", icon: "🏥" },
   { href: "/admin/patients", label: "Patients", icon: "👥" },
   { href: "/admin/assistants", label: "Assistants", icon: "🧑‍💼" },
-  { href: "/admin/learning", label: "MeyVeda Learning", icon: "▤" },
+  { href: "/admin/learning", label: `${SITE_NAME} Learning`, icon: "▤" },
   { href: "/admin/medicines", label: "Medicines", icon: "💊" },
   { href: "/admin/orders", label: "Orders", icon: "📦" },
   { href: "/admin/audit-logs", label: "Audit Logs", icon: "📜" },
@@ -43,10 +44,10 @@ export default function AdminAppLayout({ children }: { children: React.ReactNode
       <div className="px-5 py-5 border-b border-white/10">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-xl bg-herb-green flex items-center justify-center">
-            <span className="text-white font-bold text-sm">M</span>
+            <span className="text-white font-bold text-sm">{SITE_INITIAL}</span>
           </div>
           <div>
-            <p className="text-white font-semibold text-sm leading-tight">MeyVeda</p>
+            <p className="text-white font-semibold text-sm leading-tight">{SITE_NAME}</p>
             <p className="text-white/40 text-[10px]">Admin Panel</p>
           </div>
         </div>

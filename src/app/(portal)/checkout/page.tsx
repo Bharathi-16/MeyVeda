@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -287,7 +288,7 @@ export default function CheckoutPage() {
                 <div key={item.name} className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-semibold text-foreground">{item.name}</p>
-                    <p className="text-[10px] text-muted-foreground">{item.brand || "MeyVeda"} · {item.weight || `${item.quantity} Qty`}</p>
+                    <p className="text-[10px] text-muted-foreground">{item.brand || SITE_NAME} · {item.weight || `${item.quantity} Qty`}</p>
                   </div>
                   <span className="text-xs font-medium text-foreground flex-shrink-0">₹{item.price * item.quantity}</span>
                 </div>

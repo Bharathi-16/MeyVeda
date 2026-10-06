@@ -1,5 +1,5 @@
 <?php
-// One-time sign-in for learners launched from MeyVeda. The key is minted server-side by
+// One-time sign-in for learners launched from YurCore. The key is minted server-side by
 // local_meyveda_create_login_url (requires the web-service token), is valid for 60 seconds and single use.
 define('NO_MOODLE_COOKIES', false);
 require_once(__DIR__ . '/../../config.php');

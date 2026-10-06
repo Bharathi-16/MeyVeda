@@ -1,9 +1,12 @@
 """
-Generate MeyVeda DB Schema PDF
+Generate DB Schema PDF
 """
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
-import textwrap, re
+import os, textwrap, re
+
+# Brand name shown in the PDF and its filename. Keep in sync with src/shared/config/site.ts.
+SITE_NAME = "YurCore"
 
 def s(text):
     """Sanitize string to latin-1 safe characters."""
@@ -960,7 +963,7 @@ class PDF(FPDF):
         self.set_y(-13)
         self.set_font("Helvetica", "I", 8)
         self.set_text_color(*C_MUTED)
-        self.cell(0, 8, f"MeyVeda — Relational Database Schema  ·  Page {self.page_no()}", align="C")
+        self.cell(0, 8, f"{SITE_NAME} — Relational Database Schema  ·  Page {self.page_no()}", align="C")
         self.set_text_color(*C_TEXT)
 
     def cover_page(self):
@@ -972,7 +975,7 @@ class PDF(FPDF):
         self.set_y(22)
         self.set_font("Helvetica", "B", 28)
         self.set_text_color(*C_HEADER_TEXT)
-        self.cell(0, 12, "MeyVeda", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        self.cell(0, 12, SITE_NAME, align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
         self.set_font("Helvetica", "", 13)
         self.cell(0, 8, "Relational Database Schema", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
@@ -1018,7 +1021,7 @@ class PDF(FPDF):
         self.set_x(20)
         desc = (
             "This document contains the complete PostgreSQL relational database schema for the "
-            "MeyVeda platform — covering user identity, ABHA/ABDM integration, practitioner "
+            f"{SITE_NAME} platform — covering user identity, ABHA/ABDM integration, practitioner "
             "onboarding and scheduling, appointments, teleconsultations, EMR (SOAP + AYUSH "
             "assessment), digital prescriptions, care plans, health records, ABDM consent "
             "management, medicine orders (Apothecary), Dinacharya wellness tracking, AI chat, "
@@ -1216,7 +1219,7 @@ def build():
     pdf.enum_page()
     pdf.render_modules()
 
-    out = "/Users/trivine/Downloads/MeyVeda-main/db/MeyVeda_DB_Schema.pdf"
+    out = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"{SITE_NAME}_DB_Schema.pdf")
     pdf.output(out)
     print(f"PDF written → {out}")
 

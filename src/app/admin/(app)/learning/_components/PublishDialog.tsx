@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import { useState } from "react";
 import { toast } from "react-hot-toast";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
@@ -61,7 +62,7 @@ export function PublishDialog({ course, sections, onClose, onDone }: { course: A
     >
       {publishing ? (
         <div className="space-y-4 text-sm">
-          <p className="text-foreground/80">Once published, every practitioner can find and take this course in MeyVeda Learning. You can keep editing it afterwards.</p>
+          <p className="text-foreground/80">Once published, every practitioner can find and take this course in {SITE_NAME} Learning. You can keep editing it afterwards.</p>
           <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {rows.map(([k, v]) => (
               <div key={k} className="rounded-xl bg-background px-3 py-2.5">

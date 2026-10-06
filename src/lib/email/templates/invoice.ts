@@ -1,3 +1,4 @@
+import { SITE_NAME } from "@/shared/config/site";
 import { renderEmailShell, toPlainTextRows, type EmailContent } from "./base";
 
 export type InvoiceTemplateInput = {
@@ -29,11 +30,11 @@ export function invoiceTemplate(input: InvoiceTemplateInput): EmailContent {
     toPlainTextRows(rows),
     "",
     "Regards,",
-    "MeyVeda Team",
+    `${SITE_NAME} Team`,
   ].join("\n");
 
   return {
-    subject: "Your MeyVeda consultation invoice",
+    subject: `Your ${SITE_NAME} consultation invoice`,
     html,
     text,
   };

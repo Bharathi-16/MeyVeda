@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { ChatInboxShell, type ChatThread, type ChatMessage } from "@/components/chat/ChatInboxShell";
@@ -187,7 +188,7 @@ export default function InboxPage() {
         sending={sending}
         headerActionLabel="View Intake"
         onHeaderAction={handleViewIntake}
-        composerHint="Visible to patient in their MeyVeda app"
+        composerHint={`Visible to patient in their ${SITE_NAME} app`}
         statusLine="Active patient · Bounded channel · Encrypted"
       />
     </div>

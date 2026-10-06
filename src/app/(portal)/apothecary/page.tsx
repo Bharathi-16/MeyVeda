@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -105,7 +106,7 @@ export default function ApothecaryPage() {
         return {
           id: (item as any).id || `rx-${i}`,
           name: item.name,
-          brand: fullMed?.brand || "MeyVeda Apothecary",
+          brand: fullMed?.brand || `${SITE_NAME} Apothecary`,
           weight: item.dose || "100g",
           price: fullMed?.price_paise ? fullMed.price_paise / 100 : 250, // actual price or default
           quantity: 1,
@@ -140,7 +141,7 @@ export default function ApothecaryPage() {
         {
           id: item.id || `item-${Date.now()}`,
           name: item.name,
-          brand: item.brand || "MeyVeda",
+          brand: item.brand || SITE_NAME,
           weight: "100g",
           price: item.price,
           quantity: 1,
@@ -159,7 +160,7 @@ export default function ApothecaryPage() {
     ? rawMedicines.slice(0, 6).map((m, i) => ({
         id: m.id || `med-${i}`,
         name: m.name,
-        brand: m.brand || "MeyVeda",
+        brand: m.brand || SITE_NAME,
         price: m.price_paise ? m.price_paise / 100 : 150, 
         icon: getMedicineIcon(m.name),
       }))
@@ -357,7 +358,7 @@ export default function ApothecaryPage() {
 
           <div className="bg-ivory-deep rounded-2xl border border-border p-4">
             <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-              Why MeyVeda Apothecary?
+              Why {SITE_NAME} Apothecary?
             </h4>
             {["Authentic AYUSH-certified products", "Doctor-prescribed formulations", "Cold-chain assured delivery", "FSSAI & GMP compliant"].map((f) => (
               <div key={f} className="flex items-center gap-2 py-1.5">

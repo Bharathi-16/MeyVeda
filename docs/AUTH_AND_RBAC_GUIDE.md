@@ -1,6 +1,6 @@
-# MeyVeda Authentication & RBAC Guide
+# YurCore Authentication & RBAC Guide
 
-MeyVeda uses a Role-Based Access Control (RBAC) and Permission-Based Access Control (PBAC) mechanism to secure user actions.
+YurCore uses a Role-Based Access Control (RBAC) and Permission-Based Access Control (PBAC) mechanism to secure user actions.
 
 ---
 

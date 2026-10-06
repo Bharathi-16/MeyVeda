@@ -1,6 +1,6 @@
-# MeyVeda System Architecture
+# YurCore System Architecture
 
-MeyVeda is a multi-role digital health platform designed around a clean separation of concerns. This guide details how data, requests, and security boundaries interact across the frontend, backend, and database layers.
+YurCore is a multi-role digital health platform designed around a clean separation of concerns. This guide details how data, requests, and security boundaries interact across the frontend, backend, and database layers.
 
 ---
 

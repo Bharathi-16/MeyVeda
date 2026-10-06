@@ -1,3 +1,4 @@
+import { SITE_NAME } from "@/shared/config/site";
 export type EmailContent = {
   subject: string;
   html: string;
@@ -7,7 +8,7 @@ export type EmailContent = {
 type EmailRow = { label: string; value: string };
 
 /**
- * Wraps body content in the same green MeyVeda shell used by the OTP email
+ * Wraps body content in the same green YurCore shell used by the OTP email
  * (supabase/functions/send-otp/index.ts) so all transactional email looks
  * like one product.
  */
@@ -53,7 +54,7 @@ export function renderEmailShell(options: {
           border: 1px solid #dce8dc;
           border-radius: 14px;
         ">
-          <p style="margin: 0 0 4px; font-size: 20px; font-weight: bold; color: #10b981;">MeyVeda</p>
+          <p style="margin: 0 0 4px; font-size: 20px; font-weight: bold; color: #10b981;">${SITE_NAME}</p>
           <p style="margin: 0 0 20px; font-size: 11px; color: #64748b;">India's First AYUSH Digital Health Platform</p>
 
           <h2 style="margin: 0 0 16px; color: #166534;">${heading}</h2>
@@ -71,12 +72,12 @@ export function renderEmailShell(options: {
           ${bodyHtml ?? ""}
 
           <p style="margin: 22px 0 0; color: #4b5563; font-size: 14px; line-height: 1.6;">
-            ${footerNote ?? "If you have any questions, please reach out to your MeyVeda practitioner."}
+            ${footerNote ?? `If you have any questions, please reach out to your ${SITE_NAME} practitioner.`}
           </p>
 
           <p style="margin-top: 22px; margin-bottom: 0;">
             Regards,<br />
-            <strong>MeyVeda Team</strong>
+            <strong>${SITE_NAME} Team</strong>
           </p>
         </div>
       </body>

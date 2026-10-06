@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
 import { useQuery } from "@/hooks/useQuery";
@@ -8,7 +9,7 @@ import { CourseCard } from "./CourseCard";
 import { learningApi, type Scope } from "../_lib/api";
 
 const COPY: Record<Scope, { title: string; subtitle: string; empty: string }> = {
-  all: { title: "MeyVeda Learning", subtitle: "Courses available to you.", empty: "No courses are available yet." },
+  all: { title: `${SITE_NAME} Learning`, subtitle: "Courses available to you.", empty: "No courses are available yet." },
   mine: { title: "My Learning", subtitle: "Courses you have started.", empty: "You have not started any course yet." },
   completed: { title: "Completed Courses", subtitle: "Courses you have finished.", empty: "No completed courses yet." },
 };

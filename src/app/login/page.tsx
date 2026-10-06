@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import {
   useEffect,
   useState,
@@ -534,7 +535,7 @@ export default function LoginPage() {
             </div>
 
             <span className="text-lg font-semibold tracking-tight text-white">
-              MeyVeda
+              {SITE_NAME}
             </span>
 
             <div className="grid">
@@ -607,7 +608,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-xs text-white/20">
-          ©️ 2026 MeyVeda · Trivine Tech Solutions
+          ©️ 2026 {SITE_NAME} · Trivine Tech Solutions
         </p>
       </div>
 
@@ -622,7 +623,7 @@ export default function LoginPage() {
             </div>
 
             <span className="font-semibold text-foreground">
-              MeyVeda
+              {SITE_NAME}
             </span>
           </div>
 
@@ -631,7 +632,7 @@ export default function LoginPage() {
           </h2>
 
           <p className="mt-1 text-sm text-muted-foreground">
-            Access your MeyVeda account
+            Access your {SITE_NAME} account
           </p>
 
           <form
@@ -827,7 +828,7 @@ export default function LoginPage() {
           </button>
 
           <p className="mt-6 text-center text-xs text-muted-foreground">
-            New to MeyVeda?{" "}
+            New to {SITE_NAME}?{" "}
             <a
               href="/onboarding"
               className="font-semibold text-herb-green hover:underline"

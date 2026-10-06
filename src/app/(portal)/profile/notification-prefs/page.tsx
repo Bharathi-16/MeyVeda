@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import { useState } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -100,7 +101,7 @@ export default function NotificationPrefsPage() {
       <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
         <div>
           <h1 className="font-display text-xl font-semibold text-foreground">Notification Preferences</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Choose how and when MeyVeda reaches you.</p>
+          <p className="text-sm text-muted-foreground mt-0.5">Choose how and when {SITE_NAME} reaches you.</p>
         </div>
         <button
           onClick={handleSave}

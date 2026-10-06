@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -385,7 +386,7 @@ export default function OnboardingPage() {
               {/* Brand Logo */}
               <h1 className="text-[48px] md:text-[56px] font-bold tracking-tight mb-4">
                 <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#3B5BFF] to-[#A855F7] drop-shadow-sm">
-                  MeyVeda
+                  {SITE_NAME}
                 </span>
               </h1>
 

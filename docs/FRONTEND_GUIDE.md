@@ -1,6 +1,6 @@
-# MeyVeda Frontend Development Guide
+# YurCore Frontend Development Guide
 
-This guide describes how to build frontend modules inside MeyVeda, keeping them clean, robust, and separated from backend logic.
+This guide describes how to build frontend modules inside YurCore, keeping them clean, robust, and separated from backend logic.
 
 ---
 

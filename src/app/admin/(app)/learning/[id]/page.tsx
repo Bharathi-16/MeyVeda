@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import { use, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -38,7 +39,7 @@ export default function CourseBuilderPage({ params }: { params: Promise<{ id: st
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <Link href="/admin/learning" className="inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:text-foreground"><ArrowLeft size={14} /> MeyVeda Learning</Link>
+      <Link href="/admin/learning" className="inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:text-foreground"><ArrowLeft size={14} /> {SITE_NAME} Learning</Link>
 
       {/* Course information */}
       <div className="rounded-2xl border border-border bg-white p-5">

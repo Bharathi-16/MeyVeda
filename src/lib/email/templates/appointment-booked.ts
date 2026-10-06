@@ -1,3 +1,4 @@
+import { SITE_NAME } from "@/shared/config/site";
 import { renderEmailShell, toPlainTextRows, type EmailContent } from "./base";
 
 export type AppointmentBookedTemplateInput = {
@@ -24,7 +25,7 @@ export function appointmentBookedTemplate(
     heading: "Appointment Confirmed",
     intro: `Hi ${input.patientName}, your appointment has been booked successfully.`,
     rows,
-    footerNote: "You can view or manage this appointment anytime from your MeyVeda dashboard.",
+    footerNote: `You can view or manage this appointment anytime from your ${SITE_NAME} dashboard.`,
   });
 
   const text = [
@@ -35,11 +36,11 @@ export function appointmentBookedTemplate(
     toPlainTextRows(rows),
     "",
     "Regards,",
-    "MeyVeda Team",
+    `${SITE_NAME} Team`,
   ].join("\n");
 
   return {
-    subject: "Your MeyVeda appointment is confirmed",
+    subject: `Your ${SITE_NAME} appointment is confirmed`,
     html,
     text,
   };

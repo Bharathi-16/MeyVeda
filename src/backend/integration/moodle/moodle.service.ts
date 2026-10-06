@@ -9,7 +9,7 @@ import { getMoodleConfig } from "./config";
  * Core functions cover courses, users, enrolment, completion and grades. Everything
  * Moodle core cannot do over web services (creating activities, quiz questions,
  * sections, single sign-on) goes through the `local_meyveda_*` functions of the
- * MeyVeda bridge plugin (moodle/local/meyveda). See docs/MOODLE_INTEGRATION.md.
+ * YurCore bridge plugin (moodle/local/meyveda). See docs/MOODLE_INTEGRATION.md.
  */
 
 export type MoodleCourse = {
@@ -105,7 +105,7 @@ function toCourse(c: any): MoodleCourse {
     startdate: c.startdate ?? 0,
     enddate: c.enddate ?? 0,
     enablecompletion: Boolean(c.enablecompletion),
-    // Moodle files need the WS token, so browsers only ever get the MeyVeda image proxy.
+    // Moodle files need the WS token, so browsers only ever get the YurCore image proxy.
     imageUrl: c.overviewfiles?.[0]?.fileurl ?? null,
   };
 }
@@ -200,12 +200,12 @@ export const Moodle = {
     return map;
   },
 
-  // ---- Course structure and activities (MeyVeda bridge plugin) ----
+  // ---- Course structure and activities (YurCore bridge plugin) ----
   async getStructure(courseId: number): Promise<MoodleSection[]> {
     return parse<{ sections: MoodleSection[] }>(await callMoodle("local_meyveda_get_course_structure", { courseid: courseId })).sections;
   },
 
-  /** Counts derived from the live Moodle structure (nothing is stored in MeyVeda). */
+  /** Counts derived from the live Moodle structure (nothing is stored in YurCore). */
   summarize(sections: MoodleSection[]): CourseStructure {
     const out: CourseStructure = { sections: 0, activities: 0, quizzes: 0, assignments: 0 };
     for (const s of sections) {
@@ -360,7 +360,7 @@ export const Moodle = {
     return new Set(res.map((c) => c.id));
   },
 
-  // ---- Progress and results (Moodle calculates; MeyVeda displays) ----
+  // ---- Progress and results (Moodle calculates; YurCore displays) ----
   /** Per-activity completion for one learner. Untracked activities are flagged so they aren't counted. */
   async getActivityStatuses(courseId: number, moodleUserId: number): Promise<ActivityStatus[]> {
     try {

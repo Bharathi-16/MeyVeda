@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import { useState, useRef, useEffect } from "react";
 import { PractitionerCard } from "@/components/PractitionerCard";
 import { DISCIPLINES } from "@/lib/data";
@@ -183,7 +184,7 @@ export default function DiscoverPage() {
       hprId: doc.verifications?.[0]?.hpr_id || "HPR-PENDING",
       languages: doc.languages || ["English"],
       qualifications: doc.qualifications?.length ? doc.qualifications : ["BAMS"],
-      about: `${doc.full_name} is a verified specialist doctor on MeyVeda.`,
+      about: `${doc.full_name} is a verified specialist doctor on ${SITE_NAME}.`,
       gender: doc.gender || "",
       state: doc.state || "",
       city: doc.city || "",

@@ -1,6 +1,6 @@
-# MeyVeda Security Architecture
+# YurCore Security Architecture
 
-MeyVeda implements strict security boundaries across browser clients, server APIs, and database transactions to protect sensitive healthcare information.
+YurCore implements strict security boundaries across browser clients, server APIs, and database transactions to protect sensitive healthcare information.
 
 ---
 

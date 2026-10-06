@@ -1,8 +1,8 @@
--- MeyVeda Learning: courses are built and stored in MeyVeda (Supabase + Supabase Storage).
+-- YurCore Learning: courses are built and stored in YurCore (Supabase + Supabase Storage).
 -- Moodle is no longer the content store. Course information stays in meyveda_learning_courses
 -- (extended here); structure, content, quizzes and learner progress get their own tables.
 -- Files live in the private "learning" Storage bucket; rows only hold the storage path + metadata.
--- Not applied automatically: run it against the MeyVeda Supabase project (SQL editor or CLI).
+-- Not applied automatically: run it against the YurCore Supabase project (SQL editor or CLI).
 
 -- ---------------------------------------------------------------------------
 -- 1. Course information (existing table, extended)

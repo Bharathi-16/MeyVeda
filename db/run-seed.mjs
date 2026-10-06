@@ -7,7 +7,7 @@ const supabase = createClient(
 );
 
 async function seed() {
-  console.log('🌱 Seeding MeyVeda database...\n');
+  console.log('🌱 Seeding YurCore database...\n');
 
   // 1. Users
   console.log('→ Inserting users...');

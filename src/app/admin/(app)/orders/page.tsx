@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { SITE_SHORT_CODE } from "@/shared/config/site";
 import { cn } from "@/lib/utils";
 import { useAdminOrders, updateOrderStatusApi as updateOrderStatus } from "@/hooks/use-admin";
 
@@ -62,8 +63,8 @@ export default function AdminOrdersPage() {
       : "—";
 
     const number = o.created_at 
-      ? `MV-${new Date(o.created_at).toISOString().substring(2, 10).replace(/-/g, "")}-${o.id.substring(0, 4).toUpperCase()}`
-      : `MV-${o.id.substring(0, 8).toUpperCase()}`;
+      ? `${SITE_SHORT_CODE}-${new Date(o.created_at).toISOString().substring(2, 10).replace(/-/g, "")}-${o.id.substring(0, 4).toUpperCase()}`
+      : `${SITE_SHORT_CODE}-${o.id.substring(0, 8).toUpperCase()}`;
 
     const items = (o.order_items ?? []).map((item: any) => ({
       name: item.medicine_name,

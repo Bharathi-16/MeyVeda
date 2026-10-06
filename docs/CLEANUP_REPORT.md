@@ -1,4 +1,4 @@
-# MeyVeda Codebase Cleanup & Migration Report
+# YurCore Codebase Cleanup & Migration Report
 
 This report summarizes the files relocated, deprecated helpers deleted, and validation results compiled during the codebase refactoring.
 

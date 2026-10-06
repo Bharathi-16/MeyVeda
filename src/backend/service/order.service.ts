@@ -1,3 +1,4 @@
+import { SITE_NAME } from "@/shared/config/site";
 import { OrderRepository, PlaceOrderInput } from "../repo/order.repo";
 import { AppointmentsRepository } from "../repo/appointments.repo";
 import { AuthUser } from "@/shared/auth/auth.types";
@@ -32,7 +33,7 @@ export class OrderService {
       autoRefill: row.refill_order ?? false,
       items: (row.order_items ?? []).map((item: any) => ({
         name: item.medicine_name,
-        brand: "MeyVeda",
+        brand: SITE_NAME,
         weight: "100g",
         price: Math.round((item.unit_price_paise ?? 0) / 100),
         icon: "💊",

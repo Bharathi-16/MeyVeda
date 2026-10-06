@@ -21,7 +21,7 @@ use context_module;
 use moodle_exception;
 
 /**
- * Authoring bridge for MeyVeda. Every function returns a JSON string so the MeyVeda backend
+ * Authoring bridge for YurCore. Every function returns a JSON string so the YurCore backend
  * can evolve its payloads without re-registering Moodle web-service structures.
  * All functions run as the web-service token user and check Moodle capabilities.
  */
@@ -65,7 +65,7 @@ class api extends external_api {
     }
 
     /**
-     * Availability JSON from {from, until, afterCmid}. Conditions Moodle supports but MeyVeda's editor does not
+     * Availability JSON from {from, until, afterCmid}. Conditions Moodle supports but YurCore's editor does not
      * (grade, group, profile...) that already exist on the activity are kept untouched.
      */
     private static function availability_json(array $a, ?string $existing = null): string {
@@ -87,7 +87,7 @@ class api extends external_api {
         return json_encode(['op' => '&', 'c' => $c, 'showc' => array_fill(0, count($c), true)]);
     }
 
-    /** Reverse of availability_json for the conditions MeyVeda knows how to edit. */
+    /** Reverse of availability_json for the conditions YurCore knows how to edit. */
     private static function availability_parse(?string $json): array {
         $out = ['from' => null, 'until' => null, 'afterCmid' => null];
         if (!$json) {

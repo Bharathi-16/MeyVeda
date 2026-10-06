@@ -1,6 +1,6 @@
 import { createClient } from "@/shared/db/supabase.server";
 
-/** Data access for MeyVeda Learning. Server-side only (service role); every table has RLS enabled. */
+/** Data access for YurCore Learning. Server-side only (service role); every table has RLS enabled. */
 
 export type CourseRow = {
   id: string;

@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import { use } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -16,7 +17,7 @@ export default function CourseDetailsPage({ params }: { params: Promise<{ id: st
     return (
       <div className="mx-auto max-w-3xl px-4 py-16 text-center">
         <p className="text-sm text-muted-foreground">{error ?? "Course not found"}</p>
-        <Link href="/pro/learning" className="mt-3 inline-block text-sm font-semibold text-copper">Back to MeyVeda Learning</Link>
+        <Link href="/pro/learning" className="mt-3 inline-block text-sm font-semibold text-copper">Back to {SITE_NAME} Learning</Link>
       </div>
     );
   }

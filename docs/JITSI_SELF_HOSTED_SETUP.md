@@ -5,7 +5,7 @@
 By default this app points at the public `meet.jit.si` with no authentication
 on the room itself (`JITSI_DOMAIN=meet.jit.si` in `.env.local`). That means
 anyone who obtains a room name (visible in API responses, the iframe URL, or
-browser history) can join the call directly, bypassing MeyVeda's own login.
+browser history) can join the call directly, bypassing YurCore's own login.
 
 The app's backend (`src/backend/service/appointments.service.ts`,
 `signJitsiJwt`) already supports signing a Jitsi-compatible JWT per session
@@ -113,7 +113,7 @@ admin, non-moderator for the patient), and `consult/page.tsx` already passes
 2. Open a video consultation from both a doctor and a patient account.
 3. Confirm both join successfully.
 4. Try opening the same room name directly against your Jitsi domain from an
-   unauthenticated browser tab (no MeyVeda cookies) — it should be rejected
+   unauthenticated browser tab (no YurCore cookies) — it should be rejected
    or held in the lobby, not let you straight in.
 
 ## Notes / things this does not (yet) cover

@@ -1,7 +1,7 @@
 -- Appointment attendance: records who actually showed up, so a slot is only
 -- ever marked missed when the patient and doctor were never in the
 -- consultation together — and, when it is, who didn't turn up.
--- Not applied automatically: run it against the MeyVeda Supabase project (SQL editor or CLI).
+-- Not applied automatically: run it against the YurCore Supabase project (SQL editor or CLI).
 
 alter table public.appointments
   add column if not exists patient_joined_at      timestamptz,

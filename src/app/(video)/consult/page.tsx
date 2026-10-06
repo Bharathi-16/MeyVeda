@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import {
   Suspense,
   useCallback,
@@ -360,7 +361,7 @@ function ConsultationContent() {
 
       api.executeCommand?.(
         "subject",
-        "MeyVeda Video Consultation",
+        `${SITE_NAME} Video Consultation`,
       );
 
       api.addListener(
@@ -567,7 +568,7 @@ function ConsultationContent() {
 
         <div>
           <h1 className="text-sm font-semibold text-foreground">
-            MeyVeda Video Consultation
+            {SITE_NAME} Video Consultation
           </h1>
 
           <p className="text-[11px] text-muted-foreground">
@@ -598,11 +599,11 @@ function ConsultationContent() {
   roomName={session.roomName}
   jwt={session.jwt}
   userInfo={{
-    displayName: session.displayName || "MeyVeda User",
+    displayName: session.displayName || `${SITE_NAME} User`,
     email: session.email?.trim() || "",
   }}
   configOverwrite={{
-    subject: "MeyVeda Video Consultation",
+    subject: `${SITE_NAME} Video Consultation`,
     startWithAudioMuted: false,
     startWithVideoMuted: false,
     prejoinPageEnabled: false,

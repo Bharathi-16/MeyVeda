@@ -1,6 +1,6 @@
--- Reference index of the Moodle activities that belong to a MeyVeda course.
+-- Reference index of the Moodle activities that belong to a YurCore course.
 -- Moodle stays the source of truth (content, questions, dates, completion, grades);
--- this table only maps MeyVeda courses to Moodle activity ids and is re-synced from
+-- this table only maps YurCore courses to Moodle activity ids and is re-synced from
 -- Moodle whenever an admin opens or changes a course. Not applied automatically.
 create table if not exists public.meyveda_learning_course_activities (
   id                  uuid primary key default gen_random_uuid(),

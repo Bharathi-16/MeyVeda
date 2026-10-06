@@ -4,8 +4,8 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* ─── MeyVeda Design System ─────────────────────────────────────
-   MeyVeda Nova Direction
+/* ─── YurCore Design System ─────────────────────────────────────
+   YurCore Nova Direction
    Palette: Cool Ivory · Electric Indigo · Steel Slate · Electric Teal · Amber
    Typography: Space Grotesk · Inter
 ──────────────────────────────────────────────────────────────── */
@@ -31,7 +31,7 @@
   --color-input:              var(--input);
   --color-ring:               var(--ring);
 
-  /* --- MeyVeda brand tokens ----------------------------------- */
+  /* --- YurCore brand tokens ----------------------------------- */
   --color-herb-green:         var(--herb-green);
   --color-herb-green-light:   var(--herb-green-light);
   --color-sage:               var(--sage);
@@ -76,7 +76,7 @@
 
 /* ─── Light Mode Tokens ────────────────────────────────────── */
 :root {
-  /* MeyVeda Nova brand palette */
+  /* YurCore Nova brand palette */
   --herb-green:       oklch(0.44 0.22 268);   /* electric indigo primary    */
   --herb-green-light: oklch(0.58 0.18 268);   /* mid indigo                 */
   --sage:             oklch(0.55 0.08 245);   /* steel slate                */
@@ -88,7 +88,7 @@
   --clinical-dark:    oklch(0.14 0.030 268);  /* deep navy-black            */
   --ayur-gold:        oklch(0.75 0.15 70);    /* electric amber             */
 
-  /* shadcn semantic mapping → MeyVeda Nova palette */
+  /* shadcn semantic mapping → YurCore Nova palette */
   --background:           var(--ivory);
   --foreground:           var(--clinical-dark);
   --card:                 oklch(1 0 0);
@@ -147,7 +147,7 @@
 }
 
 
-/* ─── MeyVeda Utility Classes ──────────────────────────────── */
+/* ─── YurCore Utility Classes ──────────────────────────────── */
 @layer utilities {
   .font-display {
     font-family: var(--font-display), "Arial", sans-serif;

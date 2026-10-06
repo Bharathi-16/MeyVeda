@@ -1,6 +1,6 @@
-# MeyVeda Supabase RLS Policy Guide
+# YurCore Supabase RLS Policy Guide
 
-MeyVeda uses PostgreSQL Row-Level Security (RLS) to enforce data access isolation directly at the database engine level. This guide documents the recommended SQL scripts to implement these policies.
+YurCore uses PostgreSQL Row-Level Security (RLS) to enforce data access isolation directly at the database engine level. This guide documents the recommended SQL scripts to implement these policies.
 
 ---
 

@@ -1,6 +1,6 @@
-# MeyVeda Codebase Folder Structure
+# YurCore Codebase Folder Structure
 
-Welcome to the MeyVeda codebase! This guide is designed to help junior developers navigate our project architecture easily. 
+Welcome to the YurCore codebase! This guide is designed to help junior developers navigate our project architecture easily. 
 
 We separate files strictly by responsibility to keep the system organized, secure, and maintainable.
 

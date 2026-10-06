@@ -12,7 +12,7 @@ const user = (role: AuthUser["role"]): AuthUser => ({ id: "11111111-1111-4111-81
 const ID = "22222222-2222-4222-8222-222222222222";
 const q = (correct: number, n = 4) => ({ question: "Which dosha governs movement?", explanation: "", options: Array.from({ length: n }, (_, i) => ({ text: `Option ${i}`, correct: i === correct })) });
 
-describe("MeyVeda Learning authorization", () => {
+describe("YurCore Learning authorization", () => {
   it("rejects every course-building action for practitioners and other non-admin roles before touching data", async () => {
     for (const role of ["doctor", "assistant", "patient", "staff"] as const) {
       const u = user(role);
@@ -53,7 +53,7 @@ describe("MeyVeda Learning authorization", () => {
   });
 });
 
-describe("MeyVeda Learning validation", () => {
+describe("YurCore Learning validation", () => {
   it("requires exactly one correct answer and at least two options per question", () => {
     expect(questionInputSchema.safeParse(q(1)).success).toBe(true);
     expect(questionInputSchema.safeParse({ ...q(1), options: q(1).options.map((o) => ({ ...o, correct: true })) }).success).toBe(false);

@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import {
   Suspense,
   useCallback,
@@ -972,7 +973,7 @@ useEffect(() => {
             </button>
 
             <p className="text-[10px] text-muted-foreground text-center">
-              The call opens inside MeyVeda using
+              The call opens inside {SITE_NAME} using
               Jitsi Meet.
             </p>
           </aside>

@@ -1,3 +1,4 @@
+import { SITE_NAME } from "@/shared/config/site";
 import { randomBytes, randomUUID } from "crypto";
 import { z } from "zod";
 import { AppError, AuthorizationError, NotFoundError, ValidationError } from "@/shared/api/api-error";
@@ -145,7 +146,7 @@ const MOODLE_FAILED: Record<string, string> = {
   unpublish: "The course could not be hidden in Moodle, so it is still published. Please try again.",
 };
 
-/** Runs a Moodle step; on failure logs the detail and stops the operation before MeyVeda is changed. */
+/** Runs a Moodle step; on failure logs the detail and stops the operation before YurCore is changed. */
 async function moodleStep<T>(step: keyof typeof MOODLE_FAILED, run: () => Promise<T>): Promise<T> {
   try {
     return await run();
@@ -208,7 +209,7 @@ export class LearningAdminService {
   }
 
   /**
-   * Moodle first, then MeyVeda: the course is created (hidden) in Moodle, and its Moodle id is stored in
+   * Moodle first, then YurCore: the course is created (hidden) in Moodle, and its Moodle id is stored in
    * meyveda_learning_courses.moodle_course_id. If the Supabase insert fails, the Moodle course is removed again.
    */
   static async createCourse(user: AuthUser, input: unknown): Promise<AdminCourse> {
@@ -253,7 +254,7 @@ export class LearningAdminService {
       patch.thumbnail_path = data.thumbnailPath;
       oldThumb = current.thumbnail_path;
     }
-    // Name and summary are mirrored to the Moodle course before MeyVeda is changed.
+    // Name and summary are mirrored to the Moodle course before YurCore is changed.
     const titleChanged = patch.title !== undefined && patch.title !== current.title;
     const descChanged = patch.description !== undefined && patch.description !== current.description;
     if (current.moodle_course_id !== null && (titleChanged || descChanged)) {
@@ -289,9 +290,9 @@ export class LearningAdminService {
   }
 
   /**
-   * Permanent deletion, Moodle first. The MeyVeda course (and its sections, content, quizzes, learner
+   * Permanent deletion, Moodle first. The YurCore course (and its sections, content, quizzes, learner
    * records and files) is only deleted after Moodle has confirmed the Moodle course is gone. If Moodle
-   * fails, nothing in MeyVeda is touched, so a retry starts from the same consistent state. A Moodle
+   * fails, nothing in YurCore is touched, so a retry starts from the same consistent state. A Moodle
    * course that no longer exists (e.g. removed in Moodle directly) counts as already deleted.
    */
   static async deleteCourse(user: AuthUser, courseId: string): Promise<void> {
@@ -311,8 +312,8 @@ export class LearningAdminService {
     try {
       await LearningRepository.deleteCourse(courseId); // sections, content, quizzes and learner records cascade
     } catch (err) {
-      console.error("[learning] MeyVeda deletion failed after Moodle deletion:", err instanceof Error ? err.message : err);
-      throw new AppError("The course was deleted from Moodle but could not be removed from MeyVeda Learning. Please try again to finish deleting it.", 500);
+      console.error(`[learning] ${SITE_NAME} deletion failed after Moodle deletion:`, err instanceof Error ? err.message : err);
+      throw new AppError(`The course was deleted from Moodle but could not be removed from ${SITE_NAME} Learning. Please try again to finish deleting it.`, 500);
     }
     await LearningRepository.removeFiles(files);
   }

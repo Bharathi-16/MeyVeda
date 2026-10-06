@@ -1,6 +1,7 @@
 /**
  * Consultations controller — handles PDF generation.
  */
+import { SITE_NAME } from "@/shared/config/site";
 import { NextRequest, NextResponse } from "next/server";
 import { renderToStream } from "@react-pdf/renderer";
 import { ConsultationPdfDocument } from "@/components/consultation-report/ConsultationPdfDocument";
@@ -48,7 +49,7 @@ export async function generatePdf(
   const dateStr = data.created_at
     ? new Date(data.created_at).toISOString().split("T")[0]
     : "Date";
-  const filename = `MeyVeda_Consultation_${patientName}_${dateStr}.pdf`;
+  const filename = `${SITE_NAME}_Consultation_${patientName}_${dateStr}.pdf`;
 
   // 5. Return PDF
   return new Response(webStream, {
@@ -93,7 +94,7 @@ export async function generateInvoicePdf(
   const dateStr = data.created_at
     ? new Date(data.created_at).toISOString().split("T")[0]
     : "Date";
-  const filename = `MeyVeda_Invoice_${patientName}_${dateStr}.pdf`;
+  const filename = `${SITE_NAME}_Invoice_${patientName}_${dateStr}.pdf`;
 
   return new Response(webStream, {
     headers: {

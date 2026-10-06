@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import { useRef, useState } from "react";
 import { toast } from "react-hot-toast";
 import { Clock, ImagePlus, Plus, RefreshCw, Target, Trash2, X } from "lucide-react";
@@ -203,7 +204,7 @@ export function CourseDetailsForm({ course, onSaved, onCancel }: { course?: Admi
                 >
                   <span className="block text-sm font-semibold text-foreground">{s === "draft" ? "Draft" : "Published"}</span>
                   <span className="mt-0.5 block text-xs text-muted-foreground">
-                    {s === "draft" ? "Only admins can see it. Keep building and preview it first." : disabled ? "Visible to all practitioners. Available once the course has content: publish from the course builder." : "Visible to all practitioners in MeyVeda Learning."}
+                    {s === "draft" ? "Only admins can see it. Keep building and preview it first." : disabled ? "Visible to all practitioners. Available once the course has content: publish from the course builder." : `Visible to all practitioners in ${SITE_NAME} Learning.`}
                   </span>
                 </button>
               );
@@ -237,7 +238,7 @@ export function CourseDetailsForm({ course, onSaved, onCancel }: { course?: Admi
               </div>
             </div>
           </div>
-          <p className="text-xs text-muted-foreground">This is how practitioners see the course in MeyVeda Learning.</p>
+          <p className="text-xs text-muted-foreground">This is how practitioners see the course in {SITE_NAME} Learning.</p>
         </div>
       </aside>
     </form>

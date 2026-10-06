@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import { useState } from "react";
 import Link from "next/link";
 import { toast } from "react-hot-toast";
@@ -34,7 +35,7 @@ export default function AdminLearningPage() {
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="font-display text-2xl font-bold text-foreground">MeyVeda Learning</h1>
+          <h1 className="font-display text-2xl font-bold text-foreground">{SITE_NAME} Learning</h1>
           <p className="mt-0.5 text-sm text-muted-foreground">Create courses with videos, documents, lessons and quizzes for practitioners.</p>
         </div>
         <Link href="/admin/learning/new" className={primaryBtn}><Plus size={16} /> Create course</Link>
@@ -135,7 +136,7 @@ export default function AdminLearningPage() {
           title="Delete course?"
           message={
             <>
-              <b>{deleting.title}</b> will be permanently deleted from MeyVeda Learning and Moodle, including its sections, videos, images, PDFs/files, lessons, quizzes and related course data such as learner progress. This action cannot be undone.
+              <b>{deleting.title}</b> will be permanently deleted from {SITE_NAME} Learning and Moodle, including its sections, videos, images, PDFs/files, lessons, quizzes and related course data such as learner progress. This action cannot be undone.
             </>
           }
           confirmLabel="Delete permanently"
@@ -149,7 +150,7 @@ export default function AdminLearningPage() {
             } finally {
               refetch(); // show the real state either way
             }
-            toast.success("Course permanently deleted from MeyVeda Learning and Moodle.");
+            toast.success(`Course permanently deleted from ${SITE_NAME} Learning and Moodle.`);
           }}
         />
       )}

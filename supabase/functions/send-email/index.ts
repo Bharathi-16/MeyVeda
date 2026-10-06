@@ -1,3 +1,4 @@
+import { SITE_NAME } from "../_shared/site.ts";
 import nodemailer from "nodemailer";
 import { corsHeaders } from "../_shared/cors.ts";
 
@@ -139,7 +140,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
     }
 
     const emailResult = await transporter.sendMail({
-      from: `"MeyVeda" <${gmailUser}>`,
+      from: `"${SITE_NAME}" <${gmailUser}>`,
       to: recipient,
       subject,
       text: text || undefined,

@@ -17,7 +17,7 @@ const row = (over: Partial<CourseRow> = {}): CourseRow => ({
   created_at: "2026-09-26T00:00:00Z", updated_at: "2026-09-26T00:00:00Z", ...over,
 });
 
-describe("course deletion keeps MeyVeda and Moodle in sync", () => {
+describe("course deletion keeps YurCore and Moodle in sync", () => {
   let order: string[];
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -28,13 +28,13 @@ describe("course deletion keeps MeyVeda and Moodle in sync", () => {
     vi.spyOn(LearningRepository, "removeFiles").mockImplementation(async () => { order.push("storage"); });
   });
 
-  it("deletes from Moodle first, then MeyVeda data, then files", async () => {
+  it("deletes from Moodle first, then YurCore data, then files", async () => {
     vi.spyOn(Moodle, "deleteCourse").mockImplementation(async (id) => { order.push(`moodle:${id}`); });
     await LearningAdminService.deleteCourse(admin, ID);
     expect(order).toEqual(["moodle:42", "supabase", "storage"]);
   });
 
-  it("leaves MeyVeda untouched and reports failure when Moodle refuses or is unreachable", async () => {
+  it("leaves YurCore untouched and reports failure when Moodle refuses or is unreachable", async () => {
     for (const kind of ["rejected", "unavailable", "timeout", "missing_function"] as const) {
       order = [];
       vi.spyOn(Moodle, "deleteCourse").mockRejectedValue(new MoodleError(kind, "core_course_delete_courses"));

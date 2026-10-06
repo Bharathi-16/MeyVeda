@@ -1,10 +1,10 @@
--- MeyVeda Learning <-> Moodle integration: minimum mapping tables.
+-- YurCore Learning <-> Moodle integration: minimum mapping tables.
 -- Moodle stays the source of truth for course structure, content, quizzes, grades,
--- completion and enrolment. These tables only link MeyVeda identities to Moodle ids
--- and hold the metadata the MeyVeda UI needs. Course management is admin-only.
--- Not applied automatically: run it against the MeyVeda Supabase project.
+-- completion and enrolment. These tables only link YurCore identities to Moodle ids
+-- and hold the metadata the YurCore UI needs. Course management is admin-only.
+-- Not applied automatically: run it against the YurCore Supabase project.
 
--- 1. One Moodle account per MeyVeda user (admin or practitioner). Lets the backend act
+-- 1. One Moodle account per YurCore user (admin or practitioner). Lets the backend act
 --    for a user in Moodle without any frontend-supplied ids.
 create table if not exists public.moodle_user_mappings (
   id               uuid primary key default gen_random_uuid(),
@@ -15,7 +15,7 @@ create table if not exists public.moodle_user_mappings (
   updated_at       timestamptz not null default now()
 );
 
--- 2. Course mapping + MeyVeda-level metadata. moodle_course_id is the id returned by the
+-- 2. Course mapping + YurCore-level metadata. moodle_course_id is the id returned by the
 --    Moodle API (never assumed equal to id). status = 'published' makes a course visible
 --    to practitioners; created_by is the admin who created it.
 create table if not exists public.meyveda_learning_courses (

@@ -1,3 +1,4 @@
+import { SITE_NAME } from "@/shared/config/site";
 import { apiClient as rawClient } from "@/shared/api/api-client";
 import type { AdminCourse, AdminCourseDetails, ContentSettings, ContentType, LearnerRow, Quiz, ResponseRow, UploadKind } from "@/shared/learning/types";
 
@@ -87,7 +88,7 @@ export function uploadFile(courseId: string, kind: UploadKind, file: File, onPro
           const body = JSON.parse(xhr!.responseText) as { message?: string; error?: string };
           msg = body.message || body.error || msg;
         } catch { /* keep default */ }
-        if (/maximum allowed size|too large|413/i.test(msg) || xhr!.status === 413) msg = "This file is larger than the storage upload limit of the MeyVeda Supabase project.";
+        if (/maximum allowed size|too large|413/i.test(msg) || xhr!.status === 413) msg = `This file is larger than the storage upload limit of the ${SITE_NAME} Supabase project.`;
         reject(new Error(msg));
       };
       xhr.onerror = () => reject(new Error("Network error while uploading. Check your connection and try again."));

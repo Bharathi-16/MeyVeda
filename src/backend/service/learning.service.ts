@@ -1,3 +1,4 @@
+import { SITE_NAME } from "@/shared/config/site";
 import { z } from "zod";
 import { AuthorizationError, NotFoundError, ValidationError } from "@/shared/api/api-error";
 import type { AuthUser } from "@/shared/auth/auth.types";
@@ -26,7 +27,7 @@ const expired = (a: AttemptRow, limit: number | null) => limit !== null && Date.
 export class LearningService {
   /** Only practitioners (not assistants/patients/admins) may use the learner experience. */
   private static async requirePractitioner(user: AuthUser) {
-    if (user.role !== ROLES.DOCTOR) throw new AuthorizationError("MeyVeda Learning is available to practitioners only");
+    if (user.role !== ROLES.DOCTOR) throw new AuthorizationError(`${SITE_NAME} Learning is available to practitioners only`);
     const p = await LearningRepository.getPractitioner(user.id);
     if (!p) throw new AuthorizationError("No practitioner profile found for this account");
   }

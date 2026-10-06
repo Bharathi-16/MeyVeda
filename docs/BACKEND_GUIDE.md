@@ -1,6 +1,6 @@
-# MeyVeda Backend Development Guide
+# YurCore Backend Development Guide
 
-This guide explains how to write structured, secure, and clean server-side code in MeyVeda using the MVC pattern.
+This guide explains how to write structured, secure, and clean server-side code in YurCore using the MVC pattern.
 
 ---
 

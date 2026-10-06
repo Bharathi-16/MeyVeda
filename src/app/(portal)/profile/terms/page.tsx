@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME, siteConfig } from "@/shared/config/site";
 import Link from "next/link";
 
 const SECTIONS = [
@@ -7,12 +8,12 @@ const SECTIONS = [
     title: "Terms of Service",
     updated: "1 January 2026",
     items: [
-      "MeyVeda is a technology platform that facilitates connections between patients and AYUSH practitioners. It is not a medical institution.",
-      "All practitioners on MeyVeda are independently licensed and registered with relevant AYUSH regulatory bodies.",
-      "Consultations on MeyVeda are supplementary wellness guidance and do not replace emergency medical care.",
+      `${SITE_NAME} is a technology platform that facilitates connections between patients and AYUSH practitioners. It is not a medical institution.`,
+      `All practitioners on ${SITE_NAME} are independently licensed and registered with relevant AYUSH regulatory bodies.`,
+      `Consultations on ${SITE_NAME} are supplementary wellness guidance and do not replace emergency medical care.`,
       "You must be 18 years or older to create an account. Family profiles for minors must be managed by a registered adult.",
       "Bookings are subject to practitioner availability. Cancellations made 2+ hours before the slot are eligible for a full refund.",
-      "MeyVeda reserves the right to suspend accounts found to be misusing the platform or violating these terms.",
+      `${SITE_NAME} reserves the right to suspend accounts found to be misusing the platform or violating these terms.`,
     ],
   },
   {
@@ -39,7 +40,7 @@ export default function TermsPage() {
       </div>
 
       <h1 className="font-display text-xl font-semibold text-foreground mb-1">Terms & Privacy Policy</h1>
-      <p className="text-sm text-muted-foreground mb-6">MeyVeda · ABDM Compliant · Privacy First</p>
+      <p className="text-sm text-muted-foreground mb-6">{SITE_NAME} · ABDM Compliant · Privacy First</p>
 
       <div className="space-y-5">
         {SECTIONS.map((section) => (
@@ -62,8 +63,8 @@ export default function TermsPage() {
 
       <div className="bg-ivory-deep rounded-2xl border border-border p-4 mt-5">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          By using MeyVeda you agree to these terms. For questions contact{" "}
-          <span className="font-medium text-foreground">legal@meyveda.in</span>.
+          By using {SITE_NAME} you agree to these terms. For questions contact{" "}
+          <span className="font-medium text-foreground">{siteConfig.legalEmail}</span>.
           For data requests, use the export or deletion option in{" "}
           <Link href="/profile/privacy" className="text-herb-green hover:underline">Privacy & Consent</Link>.
         </p>

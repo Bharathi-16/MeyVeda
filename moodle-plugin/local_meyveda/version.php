@@ -1,5 +1,5 @@
 <?php
-// MeyVeda Learning bridge: web-service functions that let MeyVeda author and launch Moodle content.
+// YurCore Learning bridge: web-service functions that let YurCore author and launch Moodle content.
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'local_meyveda';

@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_INITIAL, SITE_NAME, SITE_NAME_PARTS } from "@/shared/config/site";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -52,7 +53,7 @@ const PATIENT_NAV: NavItem[] = [
   // { href: "/apothecary", icon: Activity, label: "Apothecary" },
   { href: "/profile", icon: User, label: "Profile" },
   "separator",
-  // { href: "/pro", icon: Crown, label: "MeyVeda Pro", badge: "Pro", exact: true },
+  // { href: "/pro", icon: Crown, label: "YurCore Pro", badge: "Pro", exact: true },
 ];
 
 const PRACTITIONER_NAV: NavItem[] = [
@@ -85,7 +86,7 @@ const PRACTITIONER_NAV: NavItem[] = [
   {
     href: "/pro/learning",
     icon: GraduationCap,
-    label: "MeyVeda Learning",
+    label: `${SITE_NAME} Learning`,
   },
   "separator",
   {
@@ -151,12 +152,12 @@ export function AppSidebar({ open, onClose }: AppSidebarProps) {
           <Link href={showProNav ? "/pro" : "/"} onClick={onClose}>
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-herb-gradient flex items-center justify-center shadow-xs">
-                <span className="text-white text-base font-bold font-display">M</span>
+                <span className="text-white text-base font-bold font-display">{SITE_INITIAL}</span>
               </div>
               <div>
                 <span className="font-display text-lg font-bold tracking-tight text-foreground">
-                  <span className="text-herb-green">Mey</span>
-                  <span className="text-copper">Veda</span>
+                  <span className="text-herb-green">{SITE_NAME_PARTS[0]}</span>
+                  <span className="text-copper">{SITE_NAME_PARTS[1]}</span>
                 </span>
                 <p className="text-[10px] text-muted-foreground mt-0.5 leading-none">
                   {showProNav ? "Practitioner Portal · HPR" : "AYUSH Digital Health · ABDM"}

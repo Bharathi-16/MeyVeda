@@ -1,6 +1,7 @@
 
 
 
+import { SITE_NAME } from "@/shared/config/site";
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet, Image } from '@react-pdf/renderer';
 
@@ -62,7 +63,7 @@ export function InvoicePdfDocument({ data }: { data: any }) {
                 <View style={styles.header}>
                     <View style={styles.headerTop}>
                         <View>
-                            <Text style={styles.logoText}>MeyVeda</Text>
+                            <Text style={styles.logoText}>{SITE_NAME}</Text>
                             <Text style={styles.subtitle}>India's First AYUSH Digital Health Platform</Text>
                         </View>
                         <View style={{ alignItems: 'flex-end' }}>
@@ -141,7 +142,7 @@ export function InvoicePdfDocument({ data }: { data: any }) {
                 </View>
 
                 <View style={styles.footer} fixed>
-                    <Text style={styles.footerText}>MeyVeda Digital Health · Generated on {new Date().toLocaleString('en-IN')}</Text>
+                    <Text style={styles.footerText}>{SITE_NAME} Digital Health · Generated on {new Date().toLocaleString('en-IN')}</Text>
                     <Text style={styles.footerText} render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
                 </View>
             </Page>

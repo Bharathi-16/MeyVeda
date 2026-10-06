@@ -1,4 +1,4 @@
-/** DTOs shared by the MeyVeda Learning API and UI (admin builder, preview and learner player). */
+/** DTOs shared by the YurCore Learning API and UI (admin builder, preview and learner player). */
 
 export type CourseStatus = "draft" | "published";
 export type CourseLevel = "beginner" | "intermediate" | "advanced";

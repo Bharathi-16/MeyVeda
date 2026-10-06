@@ -1,4 +1,4 @@
-# MeyVeda API Development Guide
+# YurCore API Development Guide
 
 This guide details how to construct Next.js API Routes, wrap exceptions safely, and handle request structures.
 

@@ -1,3 +1,4 @@
+import { SITE_NAME } from "@/shared/config/site";
 import { renderEmailShell, toPlainTextRows, type EmailContent } from "./base";
 import type { MissedBy } from "@/shared/appointments/attendance";
 
@@ -42,17 +43,17 @@ function subjectFor(
 ): string {
   if (patientLeft) {
     return familyMemberName
-      ? `${familyMemberName}'s MeyVeda appointment was closed`
-      : "Your MeyVeda appointment was closed";
+      ? `${familyMemberName}'s ${SITE_NAME} appointment was closed`
+      : `Your ${SITE_NAME} appointment was closed`;
   }
   if (missedBy === "practitioner") {
     return familyMemberName
-      ? `${familyMemberName}'s MeyVeda appointment did not take place`
-      : "Your MeyVeda appointment did not take place";
+      ? `${familyMemberName}'s ${SITE_NAME} appointment did not take place`
+      : `Your ${SITE_NAME} appointment did not take place`;
   }
   return familyMemberName
-    ? `${familyMemberName} missed a MeyVeda appointment`
-    : "You missed your MeyVeda appointment";
+    ? `${familyMemberName} missed a ${SITE_NAME} appointment`
+    : `You missed your ${SITE_NAME} appointment`;
 }
 
 export function appointmentMissedTemplate(
@@ -85,7 +86,7 @@ export function appointmentMissedTemplate(
     footerNote,
     "",
     "Regards,",
-    "MeyVeda Team",
+    `${SITE_NAME} Team`,
   ].join("\n");
 
   return {

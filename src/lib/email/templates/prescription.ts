@@ -1,3 +1,4 @@
+import { SITE_NAME } from "@/shared/config/site";
 import { renderEmailShell, type EmailContent } from "./base";
 
 export type PrescriptionTemplateItem = {
@@ -49,8 +50,8 @@ export function prescriptionTemplate(
     intro: `Hi ${input.patientName}, Dr. ${input.practitionerName} has issued a new prescription for you on ${input.date}.`,
     bodyHtml: itemsHtml,
     footerNote: input.followUpDate
-      ? `Your follow-up is scheduled for ${input.followUpDate}. You can view the full prescription anytime from your MeyVeda dashboard.`
-      : "You can view the full prescription anytime from your MeyVeda dashboard.",
+      ? `Your follow-up is scheduled for ${input.followUpDate}. You can view the full prescription anytime from your ${SITE_NAME} dashboard.`
+      : `You can view the full prescription anytime from your ${SITE_NAME} dashboard.`,
   });
 
   const textItems = input.items
@@ -70,13 +71,13 @@ export function prescriptionTemplate(
     input.followUpDate ? `Follow-up: ${input.followUpDate}` : "",
     "",
     "Regards,",
-    "MeyVeda Team",
+    `${SITE_NAME} Team`,
   ]
     .filter(Boolean)
     .join("\n");
 
   return {
-    subject: "Your MeyVeda prescription is ready",
+    subject: `Your ${SITE_NAME} prescription is ready`,
     html,
     text,
   };

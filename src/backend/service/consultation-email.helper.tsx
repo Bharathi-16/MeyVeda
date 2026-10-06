@@ -1,3 +1,4 @@
+import { SITE_NAME } from "@/shared/config/site";
 import "server-only";
 
 import React from "react";
@@ -90,7 +91,7 @@ export async function sendInvoiceEmail(data: any): Promise<void> {
         totalAmount: formatRupees(invoice.totalPaise),
       },
       {
-        filename: `MeyVeda_Invoice_${patientName.replace(/[^a-zA-Z0-9]/g, "_")}.pdf`,
+        filename: `${SITE_NAME}_Invoice_${patientName.replace(/[^a-zA-Z0-9]/g, "_")}.pdf`,
         contentBase64: pdfBuffer.toString("base64"),
       },
     );

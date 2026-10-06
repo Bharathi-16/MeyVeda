@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import { useCallback, useEffect, useState } from "react";
 import { ChatInboxShell, type ChatMessage, type ChatThread } from "@/components/chat/ChatInboxShell";
 import { uploadCommunityAttachment } from "@/lib/chat-attachments";
@@ -166,9 +167,9 @@ export default function CommunityPage() {
           <div className="w-16 h-16 rounded-2xl bg-herb-gradient flex items-center justify-center mx-auto mb-5 shadow-sm">
             <span className="text-3xl">🩺</span>
           </div>
-          <h1 className="font-display text-2xl font-bold text-foreground">MeyVeda Doctors&apos; Community</h1>
+          <h1 className="font-display text-2xl font-bold text-foreground">{SITE_NAME} Doctors&apos; Community</h1>
           <p className="text-sm text-muted-foreground mt-2 max-w-md mx-auto leading-relaxed">
-            A group chat for every doctor on MeyVeda to discuss cases, share experience and learn from one another.
+            A group chat for every doctor on {SITE_NAME} to discuss cases, share experience and learn from one another.
           </p>
           <p className="text-xs text-muted-foreground mt-4">
             {state.memberCount} {state.memberCount === 1 ? "doctor has" : "doctors have"} joined
@@ -214,7 +215,7 @@ export default function CommunityPage() {
     <div className="px-4 sm:px-6 lg:px-8 py-5">
       <ChatInboxShell
         title="Community"
-        subtitle="Group chat · MeyVeda doctors only"
+        subtitle={`Group chat · ${SITE_NAME} doctors only`}
         threads={threads}
         threadsLoading={false}
         emptyThreadsTitle=""

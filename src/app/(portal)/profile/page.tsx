@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import { useState, useEffect, type ChangeEvent } from "react";
 import Link from "next/link";
 import { LogOut, MapPin, Building2 } from "lucide-react";
@@ -524,7 +525,7 @@ export default function ProfilePage() {
                         type="text"
                         value={clinicName}
                         onChange={(e) => setClinicName(e.target.value)}
-                        placeholder="e.g. MeyVeda Wellness Center"
+                        placeholder={`e.g. ${SITE_NAME} Wellness Center`}
                         className="w-full text-sm border border-border rounded-xl px-3 py-2.5 focus:outline-none focus:border-herb-green/50 focus:ring-2 focus:ring-herb-green/10 transition-all placeholder:text-muted-foreground"
                       />
                     </div>
@@ -659,7 +660,7 @@ export default function ProfilePage() {
           </div>
 
           <p className="text-center text-[10px] text-muted-foreground">
-            MeyVeda v1.0.0 · ABDM Compliant · Privacy First
+            {SITE_NAME} v1.0.0 · ABDM Compliant · Privacy First
           </p>
         </div>
       </div>
@@ -675,7 +676,7 @@ export default function ProfilePage() {
                 <line x1="21" y1="12" x2="9" y2="12" />
               </svg>
             </div>
-            <h3 className="font-display font-semibold text-foreground text-center">Sign out of MeyVeda?</h3>
+            <h3 className="font-display font-semibold text-foreground text-center">Sign out of {SITE_NAME}?</h3>
             <p className="text-sm text-muted-foreground text-center mt-2">
               You&apos;ll need your phone number to sign back in. Your health data is safely stored.
             </p>

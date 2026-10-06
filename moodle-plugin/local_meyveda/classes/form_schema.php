@@ -11,13 +11,13 @@ require_once($CFG->dirroot . '/course/modlib.php');
 use moodle_exception;
 
 /**
- * Reads Moodle's own activity/resource settings form (mod_<name>_mod_form) so MeyVeda can render exactly
+ * Reads Moodle's own activity/resource settings form (mod_<name>_mod_form) so YurCore can render exactly
  * the settings the installed Moodle defines, and submits them back through that same form, which means
  * Moodle's validation, defaults and add/update code paths decide what is saved. Nothing here invents fields.
  */
 class form_schema {
 
-    /** Element names MeyVeda does not render as plain fields (handled specially or not meaningful outside Moodle's UI). */
+    /** Element names YurCore does not render as plain fields (handled specially or not meaningful outside Moodle's UI). */
     private const SKIP_NAMES = ['availabilityconditionsjson', 'restrictgroupbutton', 'unlockcompletion', 'boundary_add_fields', 'tags', 'competencies'];
     private const SKIP_TYPES = ['hidden', 'submit', 'button', 'cancel', 'html', 'tags', 'autocomplete', 'grading'];
 
@@ -83,7 +83,7 @@ class form_schema {
         return [$form, $data, $cm, $class, $section];
     }
 
-    /** Converts one QuickForm element; returns null when it is not something MeyVeda renders. */
+    /** Converts one QuickForm element; returns null when it is not something YurCore renders. */
     private static function convert(object $e, array $ctx): ?array {
         $type = $e->getType();
         $name = $e->getName();
@@ -219,7 +219,7 @@ class form_schema {
         return $out;
     }
 
-    /** Sections (in Moodle's order), server-side hidden defaults and MeyVeda-relevant rules for a form. */
+    /** Sections (in Moodle's order), server-side hidden defaults and YurCore-relevant rules for a form. */
     public static function describe(\moodleform $form, \stdClass $data): array {
         $q = self::prop($form, '_form');
         $defaults = self::prop($q, '_defaultValues') ?? [];
@@ -299,7 +299,7 @@ class form_schema {
         return $flat;
     }
 
-    /** Turns MeyVeda's simple values into the raw request Moodle's form expects (dates as parts, editors as arrays...). */
+    /** Turns YurCore's simple values into the raw request Moodle's form expects (dates as parts, editors as arrays...). */
     private static function compose(array $flat, array $hidden, array $rules, array $values, \stdClass $data, ?string $availability): array {
         $raw = [];
         foreach ($hidden as $k => $v) {

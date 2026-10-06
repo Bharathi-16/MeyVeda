@@ -1,3 +1,4 @@
+import { SITE_NAME, SITE_SHORT_CODE } from "@/shared/config/site";
 import "server-only";
 
 import { randomUUID, createHmac } from "crypto";
@@ -232,7 +233,7 @@ function getAuthUserDisplayName(authUser: AuthUser): string {
     return "Practitioner";
   }
 
-  return "MeyVeda User";
+  return `${SITE_NAME} User`;
 }
 
 function initialsFrom(name: string): string {
@@ -242,7 +243,7 @@ function initialsFrom(name: string): string {
     .map((word) => word.charAt(0))
     .join("")
     .slice(0, 2)
-    .toUpperCase() || "MV";
+    .toUpperCase() || SITE_SHORT_CODE;
 }
 
 /**

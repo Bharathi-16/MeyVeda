@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { SITE_NAME_PARTS } from "@/shared/config/site";
 import { useEffect } from "react";
 import { useAuth } from "@/contexts/auth-context";
 import { useProfileCompletion } from "@/hooks/use-profile-completion";
@@ -96,8 +97,8 @@ export function AppHeader({ onMenuClick }: AppHeaderProps) {
 
         <Link href="/" className="flex-shrink-0">
           <span className="font-display text-lg font-bold tracking-tight">
-            <span className="text-herb-green">Mey</span>
-            <span className="text-copper">Veda</span>
+            <span className="text-herb-green">{SITE_NAME_PARTS[0]}</span>
+            <span className="text-copper">{SITE_NAME_PARTS[1]}</span>
           </span>
         </Link>
       </div>

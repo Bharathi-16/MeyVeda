@@ -1,6 +1,7 @@
 
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import { useState } from "react";
 import { Receipt, Download, Mail, Check, X, Loader2 } from "lucide-react";
 
@@ -134,7 +135,7 @@ export function InvoiceDialog({ consultationId, patientName, doctorName, invoice
                                     {/* Invoice header */}
                                     <div className="flex justify-between items-start mb-6">
                                         <div>
-                                            <p className="text-lg font-bold text-emerald-600">MeyVeda</p>
+                                            <p className="text-lg font-bold text-emerald-600">{SITE_NAME}</p>
                                             <p className="text-xs text-slate-500">India's First AYUSH Digital Health Platform</p>
                                         </div>
                                         <div className="text-right">

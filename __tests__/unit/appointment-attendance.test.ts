@@ -74,13 +74,13 @@ describe("appointmentMissedTemplate", () => {
 
   it("tells the patient they missed it by default", () => {
     const email = appointmentMissedTemplate({ ...base, missedBy: "patient" });
-    expect(email.subject).toBe("You missed your MeyVeda appointment");
+    expect(email.subject).toBe("You missed your YurCore appointment");
     expect(email.text).toContain("It looks like you missed");
   });
 
   it("does not blame the patient when the doctor didn't join", () => {
     const email = appointmentMissedTemplate({ ...base, missedBy: "practitioner" });
-    expect(email.subject).toBe("Your MeyVeda appointment did not take place");
+    expect(email.subject).toBe("Your YurCore appointment did not take place");
     expect(email.text).toContain("Dr. Rao was not available for the appointment below");
     expect(email.text).not.toContain("you missed");
   });
@@ -91,7 +91,7 @@ describe("appointmentMissedTemplate for a family member", () => {
 
   it("tells the account owner their family member missed it", () => {
     const email = appointmentMissedTemplate({ ...base, missedBy: "patient" });
-    expect(email.subject).toBe("Ravi missed a MeyVeda appointment");
+    expect(email.subject).toBe("Ravi missed a YurCore appointment");
     expect(email.text).toContain("Hi Priya,");
     expect(email.text).toContain("your family member Ravi missed the appointment below");
     expect(email.text).toContain("Patient: Ravi");
@@ -99,7 +99,7 @@ describe("appointmentMissedTemplate for a family member", () => {
 
   it("names the family member when the doctor didn't join", () => {
     const email = appointmentMissedTemplate({ ...base, missedBy: "practitioner" });
-    expect(email.subject).toBe("Ravi's MeyVeda appointment did not take place");
+    expect(email.subject).toBe("Ravi's YurCore appointment did not take place");
     expect(email.text).toContain("Dr. Rao was not available for your family member Ravi's appointment below");
   });
 
@@ -173,13 +173,13 @@ describe("appointmentMissedTemplate when the patient left the clinic", () => {
 
   it("says the appointment was closed because they left", () => {
     const email = appointmentMissedTemplate(base);
-    expect(email.subject).toBe("Your MeyVeda appointment was closed");
+    expect(email.subject).toBe("Your YurCore appointment was closed");
     expect(email.text).toContain("The appointment below was closed because you left before the consultation.");
   });
 
   it("words it for a family member", () => {
     const email = appointmentMissedTemplate({ ...base, patientName: "Priya", familyMemberName: "Ravi" });
-    expect(email.subject).toBe("Ravi's MeyVeda appointment was closed");
+    expect(email.subject).toBe("Ravi's YurCore appointment was closed");
     expect(email.text).toContain("Your family member Ravi's appointment below was closed because they left before the consultation.");
   });
 });

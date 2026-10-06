@@ -1,3 +1,4 @@
+import { SITE_NAME } from "@/shared/config/site";
 import { renderEmailShell, toPlainTextRows, type EmailContent } from "./base";
 
 export type AppointmentCancelledTemplateInput = {
@@ -22,7 +23,7 @@ export function appointmentCancelledTemplate(
     heading: "Appointment Cancelled",
     intro: `Hi ${input.patientName}, the appointment below has been cancelled.`,
     rows,
-    footerNote: "If this was a mistake, you can book a new appointment anytime from your MeyVeda dashboard.",
+    footerNote: `If this was a mistake, you can book a new appointment anytime from your ${SITE_NAME} dashboard.`,
   });
 
   const text = [
@@ -33,11 +34,11 @@ export function appointmentCancelledTemplate(
     toPlainTextRows(rows),
     "",
     "Regards,",
-    "MeyVeda Team",
+    `${SITE_NAME} Team`,
   ].join("\n");
 
   return {
-    subject: "Your MeyVeda appointment was cancelled",
+    subject: `Your ${SITE_NAME} appointment was cancelled`,
     html,
     text,
   };

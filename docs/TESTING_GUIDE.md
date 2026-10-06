@@ -1,6 +1,6 @@
-# MeyVeda Testing Guide
+# YurCore Testing Guide
 
-This guide introduces testing conventions, mock frameworks, and commands used to verify MeyVeda.
+This guide introduces testing conventions, mock frameworks, and commands used to verify YurCore.
 
 ---
 

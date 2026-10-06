@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import { Users } from "lucide-react";
 import { useQuery } from "@/hooks/useQuery";
 import { adminLearningApi } from "../_lib/api";
@@ -18,7 +19,7 @@ export function LearnersPanel({ courseId }: { courseId: string }) {
       <div className="rounded-2xl border border-dashed border-border bg-white py-16 text-center">
         <Users className="mx-auto text-muted-foreground/40" size={28} />
         <p className="mt-3 text-sm text-muted-foreground">No practitioner has started this course yet.</p>
-        <p className="text-xs text-muted-foreground">Once published, every practitioner can open it from MeyVeda Learning.</p>
+        <p className="text-xs text-muted-foreground">Once published, every practitioner can open it from {SITE_NAME} Learning.</p>
       </div>
     );
   }

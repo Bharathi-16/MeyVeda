@@ -1,5 +1,6 @@
 "use client";
 
+import { SITE_NAME } from "@/shared/config/site";
 import { useState, useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -584,7 +585,7 @@ export default function CreateProfilePage() {
                     type="text"
                     value={clinicName}
                     onChange={(e) => setClinicName(e.target.value)}
-                    placeholder="e.g. MeyVeda Wellness Center"
+                    placeholder={`e.g. ${SITE_NAME} Wellness Center`}
                     className={premiumField(showValidation && !clinicName.trim())}
                   />
                 </div>
