@@ -4,6 +4,8 @@ import { DiscoverRepository, type DiscoverMetadata, type PractitionerFilters, ty
 import type { Practitioner } from "@/features/doctor/types/doctor.types";
 import { AuthUser } from "@/shared/auth/auth.types";
 import { ForbiddenError } from "@/shared/api/api-error";
+import { AppointmentsRepository } from "../repo/appointments.repo";
+import { EmailService } from "./email.service";
 
 export class DiscoverService {
   static async getMetadata(): Promise<DiscoverMetadata> {
@@ -68,6 +70,24 @@ export class DiscoverService {
     if (!params.doctorProfileId) throw new Error("Doctor is required");
     if (!params.date || !params.time) throw new Error("Appointment date and time are required");
 
-    await DiscoverRepository.bookNewDoctorAppointment({ ...params, userId: authUser.id });
+    const appointment = await DiscoverRepository.bookNewDoctorAppointment({ ...params, userId: authUser.id });
+
+    // Same confirmation email as the standard booking flow — for a family
+    // member it goes to the account owner, naming the member.
+    const emailDetails = await AppointmentsRepository.getAppointmentEmailDetails(appointment.id);
+    if (emailDetails) {
+      const [h, m] = (emailDetails.scheduledTime || "").split(":");
+      const hours = parseInt(h, 10);
+      await EmailService.sendAppointmentBooked(emailDetails.patientEmail, {
+        patientName: emailDetails.patientName,
+        familyMemberName: emailDetails.familyMemberName,
+        practitionerName: emailDetails.practitionerName,
+        date: emailDetails.scheduledDate
+          ? new Date(`${emailDetails.scheduledDate}T00:00:00`).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+          : "",
+        time: Number.isNaN(hours) ? "" : `${hours % 12 || 12}:${m} ${hours >= 12 ? "PM" : "AM"}`,
+        mode: emailDetails.mode === "clinic" ? "clinic" : "video",
+      });
+    }
   }
 }

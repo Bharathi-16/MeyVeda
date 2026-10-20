@@ -3,6 +3,7 @@ import { ProfileService, updateProfileSchema } from "../service/profile.service"
 import { createClient } from "@/shared/db/supabase.server";
 import { getAuthUser } from "@/shared/auth/get-auth-user";
 import { apiSuccess } from "@/shared/api/api-response";
+import { auditRequest } from "@/shared/security/audit-log";
 
 export class ProfileController {
   static async getMyProfile(req: NextRequest) {
@@ -23,6 +24,13 @@ export class ProfileController {
     const service = new ProfileService(supabase);
 
     const profile = await service.updateProfile(authUser, validatedData);
+    // Which fields changed, not their values (profiles hold personal data).
+    auditRequest(req, authUser, {
+      action: "update_profile",
+      module: "profiles",
+      recordId: authUser.id,
+      metadata: { fields: Object.keys(validatedData ?? {}) },
+    });
     return apiSuccess(profile, "Profile updated successfully");
   }
 }

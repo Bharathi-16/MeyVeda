@@ -82,9 +82,14 @@ export default function MessagesPage() {
     return () => clearInterval(interval);
   }, [loadInbox]);
 
+  const activeConsultationRef = useRef<string | null>(null);
+  activeConsultationRef.current = activeThread?.consultationId ?? null;
+
   const loadMessages = useCallback(async (consultationId: string) => {
     try {
       const data = await fetchMessages(consultationId);
+      // A late response for a thread the user already left must not replace the open one.
+      if (activeConsultationRef.current && activeConsultationRef.current !== consultationId) return;
       setMessages(data);
     } catch (err) {
       console.error("Failed to load messages:", err);
@@ -96,13 +101,11 @@ export default function MessagesPage() {
       setMessages([]);
       return;
     }
+    setMessages([]);
     void loadMessages(activeThread.consultationId);
     const interval = setInterval(() => loadMessages(activeThread.consultationId), THREAD_POLL_MS);
     return () => clearInterval(interval);
   }, [activeThread?.consultationId, loadMessages]);
-
-  const activeConsultationRef = useRef<string | null>(null);
-  activeConsultationRef.current = activeThread?.consultationId ?? null;
 
   const { inbox: inboxTopic } = useRealtimeTopics();
   useRealtimeSignal(
@@ -117,14 +120,48 @@ export default function MessagesPage() {
     e.preventDefault();
     if ((!inputText.trim() && !file) || !activeThread || sending) return false;
     const content = inputText.trim();
+    const consultationId = activeThread.consultationId;
     setSendError(null);
+
+    // Refresh the thread and the inbox together once the server has the message.
+    const refresh = () => Promise.all([loadMessages(consultationId), loadInbox()]);
+
+    if (!file) {
+      // Text: show it instantly and let the user keep typing while it sends.
+      const tempId = `pending-${Date.now()}`;
+      const replyTarget = replyToId ? messages.find((m) => m.id === replyToId) : undefined;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: tempId,
+          consultationId,
+          senderName: "You",
+          direction: "patient_to_doctor",
+          content,
+          sentAt: "Sending…",
+          isRead: false,
+          attachment: null,
+          replyTo: replyTarget ? { direction: replyTarget.direction, content: replyTarget.content } : null,
+        },
+      ]);
+      setInputText("");
+      sendMessage(consultationId, content, undefined, replyToId)
+        .then(refresh)
+        .catch((err) => {
+          console.error("Failed to send message:", err);
+          setMessages((prev) => prev.filter((m) => m.id !== tempId));
+          setInputText((current) => current || content);
+          setSendError(err instanceof Error ? err.message : "Failed to send message");
+        });
+      return true;
+    }
+
     setSending(true);
     try {
-      const attachment = file ? await uploadChatAttachment(activeThread.consultationId, file) : undefined;
-      await sendMessage(activeThread.consultationId, content, attachment, replyToId);
+      const attachment = await uploadChatAttachment(consultationId, file);
+      await sendMessage(consultationId, content, attachment, replyToId);
       setInputText("");
-      await loadMessages(activeThread.consultationId);
-      await loadInbox();
+      await refresh();
       return true;
     } catch (err) {
       console.error("Failed to send message:", err);
@@ -149,6 +186,13 @@ export default function MessagesPage() {
     lastMessageTime: t.lastMessageTime,
     unread: t.unread,
     unreadCount: t.unreadCount,
+    // Family members share this inbox — label whose conversation it is.
+    ...(t.isFamilyMember
+      ? {
+          tag: `For ${t.patientName}`,
+          headerContext: `About ${t.patientName}${t.relationship ? ` (${t.relationship})` : ""} · family member`,
+        }
+      : {}),
   }));
 
   const chatMessages: ChatMessage[] = messages.map((m) => ({
@@ -187,7 +231,11 @@ export default function MessagesPage() {
         sending={sending}
         headerActionLabel="View Doctor"
         onHeaderAction={handleViewDoctor}
-        composerHint="Visible to your doctor in their practitioner portal"
+        composerHint={
+          activeThread?.isFamilyMember
+            ? `You're writing on behalf of ${activeThread.patientName} · visible to your doctor`
+            : "Visible to your doctor in their practitioner portal"
+        }
         statusLine="Encrypted · ABDM compliant"
       />
     </div>

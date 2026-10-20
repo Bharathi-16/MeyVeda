@@ -3,7 +3,7 @@
 
 import { SITE_NAME } from "@/shared/config/site";
 import { useState } from "react";
-import { Receipt, Download, Mail, Check, X, Loader2 } from "lucide-react";
+import { Receipt, Download, X, Loader2 } from "lucide-react";
 
 type InvoiceData = {
     doctorFeePaise: number;
@@ -30,8 +30,6 @@ export function InvoiceDialog({ consultationId, patientName, doctorName, invoice
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [invoice, setInvoice] = useState<InvoiceData | null>(null);
-    const [sending, setSending] = useState(false);
-    const [sent, setSent] = useState(false);
 
     const handleOpen = async () => {
         setOpen(true);
@@ -47,21 +45,6 @@ export function InvoiceDialog({ consultationId, patientName, doctorName, invoice
             setError(e.message || "Failed to load invoice");
         } finally {
             setLoading(false);
-        }
-    };
-
-    const handleEmailInvoice = async () => {
-        setSending(true);
-        try {
-            const res = await fetch(`/api/consultations/${consultationId}/invoice/send`, { method: "POST" });
-            const json = await res.json();
-            if (!res.ok || !json.success) throw new Error(json.error || "Failed to email invoice");
-            setSent(true);
-            setTimeout(() => setSent(false), 2500);
-        } catch (e: any) {
-            setError(e.message || "Failed to email invoice");
-        } finally {
-            setSending(false);
         }
     };
 
@@ -93,20 +76,6 @@ export function InvoiceDialog({ consultationId, patientName, doctorName, invoice
                                 >
                                     <Download className="w-4 h-4" />
                                 </a>
-                                <button
-                                    onClick={handleEmailInvoice}
-                                    disabled={sending || !invoice}
-                                    title="Email Invoice to Patient"
-                                    className="flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-colors disabled:opacity-50"
-                                >
-                                    {sending ? (
-                                        <Loader2 className="w-4 h-4 animate-spin" />
-                                    ) : sent ? (
-                                        <Check className="w-4 h-4" />
-                                    ) : (
-                                        <Mail className="w-4 h-4" />
-                                    )}
-                                </button>
                                 <button
                                     onClick={() => setOpen(false)}
                                     className="flex items-center justify-center w-8 h-8 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"

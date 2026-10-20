@@ -11,8 +11,8 @@ import { useAuth } from "@/contexts/auth-context";
 import { usePatientProfile } from "@/hooks/use-profile";
 import { useDinacharyaTasks } from "@/hooks/use-dinacharya";
 import { usePractitionerAnalytics } from "@/hooks/use-analytics";
-import { useHealthRecords } from "@/hooks/use-emr";
-import { usePatientPrescriptions,usePractitionerPrescriptions } from "@/hooks/use-prescriptions";
+import { usePatientRecordStats } from "@/hooks/use-consultations";
+import { usePractitionerPrescriptions } from "@/hooks/use-prescriptions";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useIndiaStates, useIndiaCities } from "@/hooks/use-location";
@@ -69,8 +69,7 @@ export default function ProfilePage() {
   const { data: dbTasks } = useDinacharyaTasks(user?.role === "patient" ? user?.id : undefined);
 
   // Patient details hooks
-  const { data: patientRecords } = useHealthRecords(user?.role === "patient" ? user?.id : undefined);
-  const { data: patientPrescriptions } = usePatientPrescriptions(user?.role === "patient" ? user?.id : undefined);
+  const { data: patientStats } = usePatientRecordStats(user?.role === "patient" ? user?.id : undefined);
 
   // Practitioner details hooks
   const { data: pracAnalytics } = usePractitionerAnalytics(user?.role === "practitioner" ? user?.id : undefined);
@@ -209,14 +208,6 @@ export default function ProfilePage() {
   const isAssistant = user?.role === "assistant";
   const menuItems = isPractitioner ? PRACTITIONER_MENU : isAssistant ? ASSISTANT_MENU : PATIENT_MENU;
 
-  // Compute Days Active
-  let daysActive = "—";
-  if (user?.role === "patient" && patientRecords) {
-    const dates = patientRecords.map((r) => new Date(r.date).getTime()).filter(Boolean);
-    const earliestDate = dates.length > 0 ? Math.min(...dates) : new Date("2026-01-01").getTime();
-    daysActive = String(Math.max(1, Math.floor((Date.now() - earliestDate) / 86400000)));
-  }
-
   const stats = isPractitioner
     ? [
         { label: "Patients Seen", value: pracAnalytics ? String(pracAnalytics.totalPatients) : "0" },
@@ -229,9 +220,9 @@ export default function ProfilePage() {
         { label: "Status", value: "Approved" },
       ]
     : [
-        { label: "Consultations", value: patientRecords ? String(patientRecords.filter(r => r.type === "consultation").length) : "0" },
-        { label: "Prescriptions", value: patientPrescriptions ? String(patientPrescriptions.length) : "0" },
-        { label: "Days Active", value: daysActive },
+        // Account owner + family members combined.
+        { label: "Consultations", value: String(patientStats?.consultations ?? 0) },
+        { label: "Prescriptions", value: String(patientStats?.prescriptions ?? 0) },
       ];
 
   const initials = user?.name

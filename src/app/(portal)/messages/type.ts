@@ -8,6 +8,11 @@ export type PatientInboxThread = {
   unread: boolean;
   unreadCount: number;
   consultationId: string;
+  /** Who the conversation is about — you or one of your family members. */
+  patientId?: string;
+  patientName?: string;
+  isFamilyMember?: boolean;
+  relationship?: string;
 };
 
 export type MessageRow = {

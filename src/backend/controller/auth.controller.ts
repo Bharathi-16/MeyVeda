@@ -2,6 +2,7 @@
  * Auth controller — handles login and JWT signing API endpoints.
  */
 import { NextRequest } from "next/server";
+import { auditRequest } from "@/shared/security/audit-log";
 import { createClient } from "@/shared/db/supabase.server";
 import { signAccessToken, signRefreshToken } from "@/lib/jwt";
 import { successResponse, errorResponse } from "@/lib/utils/response";
@@ -300,6 +301,8 @@ export async function login(req: NextRequest) {
     path: "/",
     maxAge: 7 * 24 * 60 * 60, // 7 days
   });
+
+  auditRequest(req, { id: dbUser.id, role: dbUser.role }, { action: "login", module: "auth", recordId: dbUser.id });
 
   return successResponse({
     // Return user info. We don't need to return the token to the client body

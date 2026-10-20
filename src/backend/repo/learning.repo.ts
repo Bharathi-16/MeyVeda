@@ -16,13 +16,19 @@ export type CourseRow = {
   thumbnail_path: string | null;
   status: "draft" | "published";
   published_at: string | null;
+  /** yurcore: built in YurCore and mirrored to Moodle · moodle: created in Moodle and imported */
+  origin: "yurcore" | "moodle";
+  moodle_synced_at: string | null;
+  moodle_sync_error: string | null;
+  moodle_image_sig: string | null;
   created_by: string;
   created_at: string;
   updated_at: string;
 };
 export type CourseWrite = Partial<Pick<CourseRow, "title" | "short_description" | "description" | "category_name" | "level" | "instructor_id" | "duration_minutes" | "learning_objectives" | "thumbnail_path" | "status" | "published_at">>;
+export type CourseSyncWrite = Partial<Pick<CourseRow, "moodle_synced_at" | "moodle_sync_error" | "moodle_image_sig">>;
 
-export type SectionRow = { id: string; course_id: string; title: string; description: string; position: number };
+export type SectionRow = { id: string; course_id: string; title: string; description: string; position: number; moodle_section_id: number | null };
 
 export type ContentRow = {
   id: string;
@@ -38,6 +44,9 @@ export type ContentRow = {
   mime_type: string | null;
   size_bytes: number | null;
   position: number;
+  moodle_cmid: number | null;
+  moodle_sync_hash: string | null;
+  moodle_file_sig: string | null;
 };
 export type ContentWrite = Partial<Omit<ContentRow, "id" | "course_id">>;
 
@@ -93,6 +102,12 @@ export class LearningRepository {
     return new Map(rows.map((u) => [u.id, u.email]));
   }
 
+  /** Owner recorded for courses imported from Moodle when no admin triggered the import. */
+  static async findAdminUserId(): Promise<string | null> {
+    const row = check(await db().from("users").select("id").in("role", ["super_admin", "admin"]).order("created_at").limit(1).maybeSingle(), "admin lookup") as { id: string } | null;
+    return row?.id ?? null;
+  }
+
   static async searchPractitioners(q: string, limit = 10): Promise<PractitionerInfo[]> {
     const t = term(q);
     if (t.length < 2) return [];
@@ -124,7 +139,16 @@ export class LearningRepository {
     return check(await db().from(T.courses).select("*").eq("id", id).maybeSingle(), "course lookup") as CourseRow | null;
   }
 
-  static async insertCourse(row: CourseWrite & { title: string; created_by: string; moodle_course_id: number | null }): Promise<CourseRow> {
+  static async getCourseByMoodleId(moodleCourseId: number): Promise<CourseRow | null> {
+    return check(await db().from(T.courses).select("*").eq("moodle_course_id", moodleCourseId).maybeSingle(), "course lookup") as CourseRow | null;
+  }
+
+  /** Sync bookkeeping only: does not change updated_at, so a sync never looks like an edit. */
+  static async setCourseSync(id: string, patch: CourseSyncWrite): Promise<void> {
+    check(await db().from(T.courses).update(patch).eq("id", id), "course sync update");
+  }
+
+  static async insertCourse(row: CourseWrite & { title: string; created_by: string; moodle_course_id: number | null; origin?: CourseRow["origin"] }): Promise<CourseRow> {
     return check(await db().from(T.courses).insert(row).select("*").single(), "course insert") as CourseRow;
   }
 
@@ -143,14 +167,14 @@ export class LearningRepository {
   // ---- sections ----
   static async listSections(courseIds: string[]): Promise<SectionRow[]> {
     if (courseIds.length === 0) return [];
-    return check(await db().from(T.sections).select("id, course_id, title, description, position").in("course_id", courseIds).order("position").order("created_at"), "section list") as SectionRow[];
+    return check(await db().from(T.sections).select("id, course_id, title, description, position, moodle_section_id").in("course_id", courseIds).order("position").order("created_at"), "section list") as SectionRow[];
   }
 
-  static async insertSection(row: { course_id: string; title: string; description: string; position: number }): Promise<SectionRow> {
-    return check(await db().from(T.sections).insert(row).select("id, course_id, title, description, position").single(), "section insert") as SectionRow;
+  static async insertSection(row: { course_id: string; title: string; description: string; position: number; moodle_section_id?: number | null }): Promise<SectionRow> {
+    return check(await db().from(T.sections).insert(row).select("id, course_id, title, description, position, moodle_section_id").single(), "section insert") as SectionRow;
   }
 
-  static async updateSection(id: string, patch: Partial<Pick<SectionRow, "title" | "description" | "position">>): Promise<void> {
+  static async updateSection(id: string, patch: Partial<Pick<SectionRow, "title" | "description" | "position" | "moodle_section_id">>): Promise<void> {
     check(await db().from(T.sections).update({ ...patch, updated_at: now() }).eq("id", id), "section update");
   }
 
@@ -178,6 +202,11 @@ export class LearningRepository {
 
   static async deleteContent(id: string): Promise<void> {
     check(await db().from(T.content).delete().eq("id", id), "content delete");
+  }
+
+  /** Sync bookkeeping only (Moodle ids and fingerprints): does not change updated_at. */
+  static async setContentSync(id: string, patch: Partial<Pick<ContentRow, "moodle_cmid" | "moodle_sync_hash" | "moodle_file_sig">>): Promise<void> {
+    check(await db().from(T.content).update(patch).eq("id", id), "content sync update");
   }
 
   static async isPathReferenced(path: string): Promise<boolean> {
@@ -310,6 +339,19 @@ export class LearningRepository {
     const { data, error } = await db().storage.from(LEARNING_BUCKET).createSignedUploadUrl(path);
     if (error || !data) throw new Error(`upload url failed: ${error?.message}`);
     return data;
+  }
+
+  /** Server-side upload (used when importing files from Moodle). */
+  static async uploadFile(path: string, data: ArrayBuffer, contentType: string): Promise<void> {
+    const { error } = await db().storage.from(LEARNING_BUCKET).upload(path, data, { contentType, upsert: true });
+    if (error) throw new Error(`file upload failed: ${error.message}`);
+  }
+
+  /** Server-side download (used when sending files to Moodle). */
+  static async downloadFile(path: string): Promise<ArrayBuffer> {
+    const { data, error } = await db().storage.from(LEARNING_BUCKET).download(path);
+    if (error || !data) throw new Error(`file download failed: ${error?.message ?? "no data"}`);
+    return data.arrayBuffer();
   }
 
   /** Metadata of an uploaded object, or null if it does not exist. */

@@ -5,7 +5,7 @@ import { SITE_NAME_PARTS } from "@/shared/config/site";
 import { useEffect } from "react";
 import { useAuth } from "@/contexts/auth-context";
 import { useProfileCompletion } from "@/hooks/use-profile-completion";
-import { useNotifications } from "@/hooks/use-notification";
+import { useNotifications, NOTIFICATIONS_CHANGED_EVENT } from "@/hooks/use-notification";
 import { Bell, Menu } from "lucide-react";
 import { usePathname } from "next/navigation";
 
@@ -79,6 +79,13 @@ export function AppHeader({ onMenuClick }: AppHeaderProps) {
     if (user?.id) refetchNotifications();
   }, [pathname, user?.id, refetchNotifications]);
 
+  // Mark-as-read on the notifications page updates the dot right away.
+  useEffect(() => {
+    if (!user?.id) return;
+    window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, refetchNotifications);
+    return () => window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, refetchNotifications);
+  }, [user?.id, refetchNotifications]);
+
   const initials = user?.name
     ? user.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()
     : "U";
@@ -126,13 +133,18 @@ export function AppHeader({ onMenuClick }: AppHeaderProps) {
         )}
 
         {/* Notifications */}
-        <Link href="/notifications">
-          <button className="relative p-2.5 rounded-xl hover:bg-neutral-100 text-neutral-600 transition-all active:scale-95">
-            <Bell size={18} />
-            {unreadNotifCount > 0 && (
-              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-copper border border-white animate-pulse" />
-            )}
-          </button>
+        <Link
+          href="/notifications"
+          aria-label={unreadNotifCount > 0 ? `Notifications, ${unreadNotifCount} unread` : "Notifications"}
+          className="relative p-2.5 rounded-xl hover:bg-neutral-100 text-neutral-600 transition-all active:scale-95"
+        >
+          <Bell size={18} />
+          {unreadNotifCount > 0 && (
+            <span className="absolute top-1.5 right-1.5 flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60 animate-ping" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500 border-2 border-white" />
+            </span>
+          )}
         </Link>
 
         {/* Vertical divider */}

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, X } from "lucide-react";
+import { AlertTriangle, Check, CloudDownload, Loader2, RefreshCw, X } from "lucide-react";
+import type { AdminCourse } from "@/shared/learning/types";
 import { cn } from "@/lib/utils";
 
 export const inputCls = "w-full px-3.5 py-2.5 text-sm border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-herb-green/20 focus:border-herb-green/50 bg-white placeholder:text-muted-foreground/60";
@@ -108,6 +109,38 @@ export function StatusBadge({ status }: { status: "draft" | "published" }) {
       {status === "published" ? "Published" : "Draft"}
     </span>
   );
+}
+
+/** Marks a course that was created in Moodle (imported; its content is edited in Moodle). */
+export function MoodleOriginBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-700" title="Created in Moodle and imported. Edit its content in Moodle.">
+      <CloudDownload size={12} /> From Moodle
+    </span>
+  );
+}
+
+function ago(iso: string): string {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+/** One line on where the course stands with Moodle: syncing, last synced, or what failed. */
+export function MoodleSyncStatus({ course, className }: { course: AdminCourse; className?: string }) {
+  if (course.moodleCourseId === null) return null;
+  const { busy, error, syncedAt } = course.moodleSync;
+  const verb = course.origin === "moodle" ? "Imported from Moodle" : "Synced to Moodle";
+  if (busy) {
+    return <span className={cn("inline-flex items-center gap-1 text-[11px] text-sky-700", className)}><Loader2 size={12} className="animate-spin" /> {course.origin === "moodle" ? "Importing from Moodle…" : "Syncing to Moodle…"}</span>;
+  }
+  if (error) {
+    return <span className={cn("inline-flex items-start gap-1 text-[11px] text-amber-700", className)} title={error}><AlertTriangle size={12} className="mt-px flex-shrink-0" /> <span className="line-clamp-2">Moodle sync problem: {error}</span></span>;
+  }
+  if (syncedAt) return <span className={cn("inline-flex items-center gap-1 text-[11px] text-muted-foreground", className)}><Check size={12} className="text-herb-green" /> {verb} {ago(syncedAt)}</span>;
+  return <span className={cn("inline-flex items-center gap-1 text-[11px] text-muted-foreground", className)}><RefreshCw size={11} /> Not synced with Moodle yet</span>;
 }
 
 export function Spinner({ className }: { className?: string }) {

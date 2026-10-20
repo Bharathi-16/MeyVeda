@@ -119,10 +119,39 @@ export default function CommunityPage() {
     e.preventDefault();
     const content = input.trim();
     if ((!content && !file) || sending) return false;
-    setSending(true);
     setError(null);
+
+    if (!file) {
+      // Text: show it instantly and let the doctor keep typing while it sends.
+      const tempId = `pending-${Date.now()}`;
+      const target = replyToId ? messages.find((m) => m.id === replyToId) : undefined;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: tempId,
+          content,
+          sentAt: "Sending…",
+          senderName: "You",
+          isMine: true,
+          attachment: null,
+          replyTo: target ? { senderName: target.isMine ? "You" : target.senderName, content: target.content || "Attachment" } : null,
+          reactions: [],
+        },
+      ]);
+      setInput("");
+      act("sendMessage", { content, replyToId })
+        .then(loadMessages)
+        .catch((err) => {
+          setMessages((prev) => prev.filter((m) => m.id !== tempId));
+          setInput((current) => current || content);
+          setError(err instanceof Error ? err.message : "Failed to send message");
+        });
+      return true;
+    }
+
+    setSending(true);
     try {
-      const attachment = file ? await uploadCommunityAttachment(file) : undefined;
+      const attachment = await uploadCommunityAttachment(file);
       await act("sendMessage", { content, replyToId, attachment });
       setInput("");
       await loadMessages();
@@ -136,11 +165,29 @@ export default function CommunityPage() {
   }
 
   async function handleReact(messageId: string, emoji: string) {
+    // Reflect the toggle immediately (one reaction per doctor per message).
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== messageId) return m;
+        const previous = m.reactions.find((r) => r.mine);
+        let reactions = m.reactions
+          .map((r) => (r.mine ? { ...r, count: r.count - 1, mine: false } : r))
+          .filter((r) => r.count > 0);
+        if (previous?.emoji !== emoji) {
+          const existing = reactions.find((r) => r.emoji === emoji);
+          reactions = existing
+            ? reactions.map((r) => (r.emoji === emoji ? { ...r, count: r.count + 1, mine: true } : r))
+            : [...reactions, { emoji, count: 1, mine: true }];
+        }
+        return { ...m, reactions };
+      })
+    );
     try {
       await act("react", { messageId, emoji });
       await loadMessages();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to react");
+      void loadMessages();
     }
   }
 

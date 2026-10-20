@@ -4,6 +4,7 @@ import type { BookAppointmentInput, SubmitRatingInput } from "../repo/booking.re
 import { requireAuth } from "@/shared/auth/require-auth";
 import { AppError } from "@/shared/api/api-error";
 import { checkRateLimit } from "@/shared/security/rate-limit";
+import { auditRequest } from "@/shared/security/audit-log";
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error
@@ -55,6 +56,18 @@ export class BookingController {
       const body = (await request.json()) as BookAppointmentInput;
 
       await BookingService.bookAppointment(authUser, body);
+      auditRequest(request, authUser, {
+        action: "book_appointment",
+        module: "appointments",
+        metadata: {
+          practitionerId: body.practitionerId,
+          date: body.date,
+          time: body.time,
+          mode: body.mode,
+          bookedFor: body.familyMemberId ? "family_member" : "self",
+          familyMemberId: body.familyMemberId,
+        },
+      });
 
       return NextResponse.json(
         {
@@ -89,6 +102,12 @@ export class BookingController {
         body.appointmentId ?? "",
         body.reason ?? "",
       );
+      auditRequest(request, authUser, {
+        action: "cancel_appointment",
+        module: "appointments",
+        recordId: body.appointmentId,
+        metadata: { reason: body.reason },
+      });
 
       return NextResponse.json({
         success: true,

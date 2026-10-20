@@ -7,6 +7,7 @@ import { isFileType, isQuizType } from "@/shared/learning/content";
 import type { AttemptResult, AttemptStart, ItemProgress, LearnerCourse, LearnerCourseDetails, LearnerState } from "@/shared/learning/types";
 import { LearningRepository, type AttemptRow, type ContentRow, type CourseRow, type QuizRow } from "../repo/learning.repo";
 import { UUID, buildSections, summaries } from "./learning-common";
+import { LearningMoodleSync } from "./learning-moodle-sync.service";
 
 /**
  * Practitioner-facing learning. Read/learn only: there is deliberately no create, edit,
@@ -69,6 +70,8 @@ export class LearningService {
   // ---------- queries ----------
   static async list(user: AuthUser, scope: ScopeFilter, filters: { q?: string; category?: string }): Promise<LearnerCourse[]> {
     await this.requirePractitioner(user);
+    // Courses created or changed in Moodle are picked up in the background (at most every few minutes).
+    LearningMoodleSync.scheduleRefresh(null);
     const enrollments = await LearningRepository.listEnrollments({ userId: user.id });
     const rows = await LearningRepository.listCourses({ status: "published", ...(scope === "all" ? filters : { ids: enrollments.map((e) => e.course_id) }) });
     const { list, content } = await summaries(rows);

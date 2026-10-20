@@ -1,3 +1,4 @@
+import { auditRequest } from "@/shared/security/audit-log";
 import { NextRequest, NextResponse } from "next/server";
 import { DiscoverService } from "../service/discover.service";
 import { requireAuth } from "@/shared/auth/require-auth";
@@ -151,6 +152,18 @@ export async function bookNewDoctorAppointmentController(req: NextRequest) {
 
     const body = await req.json();
     await DiscoverService.bookNewDoctorAppointment(authUser, body);
+    auditRequest(req, authUser, {
+      action: "book_appointment",
+      module: "appointments",
+      metadata: {
+        practitionerId: body.doctorProfileId,
+        date: body.date,
+        time: body.time,
+        mode: body.mode,
+        bookedFor: body.familyMemberId ? "family_member" : "self",
+        familyMemberId: body.familyMemberId,
+      },
+    });
     return NextResponse.json({ success: true, message: "Appointment booked successfully" }, { status: 201 });
   } catch (error: unknown) {
     console.error("bookNewDoctorAppointmentController error:", error);

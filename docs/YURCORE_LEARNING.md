@@ -1,7 +1,7 @@
 # YurCore Learning – course builder
 
 Course content is built and stored in YurCore: course data in Supabase, files in Supabase Storage.
-Every course is also a Moodle course, and the course lifecycle is kept in sync (see "Moodle course sync" below).
+Every course is also a Moodle course. The course lifecycle and the course content are kept in sync with Moodle, and courses created directly in Moodle are imported (see "Moodle course sync" and "Moodle content sync" below).
 Only admins (`admin`, `super_admin`) build courses. Practitioners (`doctor` role with a practitioner profile) are the learners.
 
 ## Flow
@@ -34,7 +34,30 @@ All tables have RLS on and are used only by the server (service role).
 | Publish / unpublish | course made visible / hidden | status changed |
 | Delete | `core_course_delete_courses`, then re-read to confirm it is gone. Moodle reports refusals as *warnings* in a successful response; these are checked | only then: course row (sections, content, quizzes, learner records cascade) and its Storage folder |
 
-If a Moodle step fails, the operation stops and nothing in YurCore changes, so retrying is safe. A Moodle course that no longer exists (deleted in Moodle directly) counts as already deleted, and the admin list flags such courses. Sections, files and quizzes are stored in YurCore only; they are not copied into the Moodle course.
+If a Moodle step fails, the operation stops and nothing in YurCore changes, so retrying is safe. A Moodle course that no longer exists (deleted in Moodle directly) counts as already deleted, and the admin list flags such courses.
+
+## Moodle content sync (migration `20261014000000_learning_moodle_sync.sql`)
+
+Code: `src/backend/service/learning-moodle-sync.service.ts`. Every course has an `origin`:
+
+**`yurcore` – built in YurCore, mirrored into Moodle (push).** After every builder change (section, item, order, quiz, details, publish) the course is pushed to its Moodle course in the background (Next.js `after()`), so the admin never waits for Moodle:
+
+| YurCore | Moodle |
+|---|---|
+| Section (title, description, order) | Course section |
+| Video / Image / PDF-Document | File resource with the file uploaded (shown embedded) |
+| File | File resource |
+| Text lesson | Page |
+| Quiz / Question | Quiz (time limit, attempts, pass grade) with its multiple-choice questions |
+| Assignment | Assignment (online text + file submissions, due date, attached instructions file) |
+| Feedback | Assignment (online text, ungraded) |
+| Thumbnail | Course image |
+
+YurCore is the source of truth for these courses: anything in the Moodle course YurCore does not know about is removed (Moodle's Announcements forum is kept). Rows remember their Moodle section / activity id (`moodle_section_id`, `moodle_cmid`) and a fingerprint of what was last sent (`moodle_sync_hash`, `moodle_file_sig`), so unchanged items are skipped and files are only uploaded when new or replaced.
+
+**`moodle` – created in Moodle, imported into YurCore (pull).** New Moodle courses get a YurCore row when the admin course list opens (and when practitioners open Learning, in the background, at most every 5 minutes); their content is then imported and refreshed on every sync: File resources → Video/Image/PDF/File (the file is copied to Storage), Page/Label/URL → Text lesson, Quiz → Quiz (single-answer multiple-choice and true/false questions; a quiz without such questions becomes a lesson linking to Moodle), Assignment → Assignment, Feedback → Feedback, any other activity → a lesson with its description and a link to it in Moodle. Hidden sections/activities and empty sections are skipped. The course is published in YurCore while it is visible in Moodle. Its content is edited in Moodle (the YurCore builder shows it read-only); category, level, instructor and objectives can still be set in YurCore.
+
+Status and controls: the admin list and course page show the last sync and any problem (`moodle_synced_at`, `moodle_sync_error`); **Sync with Moodle** (list) imports new Moodle courses and syncs every course both ways, **Sync now** (course page) syncs one course. A failed item does not stop the rest of the course; its Moodle message is shown on the course. Syncs of one course are queued so they never overlap (per server process).
 
 ## Files
 
@@ -46,4 +69,5 @@ There is no application limit on the number or size of videos, images or documen
 ## Setup
 
 1. Run the migration in the Supabase SQL editor (creates tables and the `learning` bucket).
-2. No new environment variables. The Moodle variables are no longer needed by Learning.
+2. Run `supabase/migrations/20261014000000_learning_moodle_sync.sql` (content sync columns).
+3. Moodle: the `local_meyveda` plugin installed and registered (`docs/MOODLE_INTEGRATION.md` § 5), file upload/download enabled for the service, and a valid `MOODLE_WS_TOKEN` (Site administration → Server → Web services → Manage tokens; user admin, service AyurLLM) plus `MOODLE_BASE_URL` in `.env.local`. PHP `upload_max_filesize` / `post_max_size` limit the largest video that can be sent to Moodle.

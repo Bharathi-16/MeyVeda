@@ -1,4 +1,4 @@
-> **Partly superseded (2026-09-26):** course content is now built and stored in YurCore (Supabase + Supabase Storage); Moodle keeps the linked course, whose create / edit / publish / delete is synchronised. See `docs/YURCORE_LEARNING.md`. The rest of this document describes the earlier integration, kept for reference.
+> **Partly superseded (2026-09-26):** course content is now built and stored in YurCore (Supabase + Supabase Storage); Moodle keeps the linked course, whose create / edit / publish / delete is synchronised. Since 2026-10-14 the content is mirrored into the Moodle course too, and courses created in Moodle are imported into YurCore ("Moodle content sync"). See `docs/YURCORE_LEARNING.md`. The rest of this document describes the earlier integration, kept for reference.
 
 # YurCore Learning – Moodle Integration (admin-controlled)
 

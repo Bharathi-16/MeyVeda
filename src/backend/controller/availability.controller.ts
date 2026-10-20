@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { AvailabilityService } from "../service/availability.service";
 import { requireAuth } from "@/shared/auth/require-auth";
+import { auditRequest } from "@/shared/security/audit-log";
 import { AppError } from "@/shared/api/api-error";
 
 function getErrorMessage(error: unknown): string {
@@ -234,6 +235,16 @@ export async function updateMySettingsController(
       authUser,
       body,
     );
+    auditRequest(req, authUser, {
+      action: "update_practitioner_settings",
+      module: "availability",
+      metadata: {
+        baseVideoFee: body.baseVideoFee,
+        baseClinicFee: body.baseClinicFee,
+        slotDurationMin: body.slotDurationMin,
+        bufferMin: body.bufferMin,
+      },
+    });
 
     return NextResponse.json({
       success: true,

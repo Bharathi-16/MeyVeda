@@ -8,6 +8,8 @@ export type InboxThread = {
   unread: boolean;
   unreadCount: number;
   consultationId: string;
+  /** Set when the patient is a family member: the account owner who reads and replies for them. */
+  familyOf?: { patientId: string; name: string; relationship?: string } | null;
 };
 
 export type MessageRow = {

@@ -1,15 +1,15 @@
 "use client";
 
 import { SITE_NAME } from "@/shared/config/site";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { toast } from "react-hot-toast";
-import { BookOpen, Eye, GraduationCap, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { BookOpen, Eye, GraduationCap, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@/hooks/useQuery";
 import { LEVEL_LABEL } from "@/shared/learning/content";
 import { adminLearningApi, type AdminCourse } from "./_lib/api";
-import { ConfirmDialog, Spinner, StatusBadge, iconBtn, inputCls, primaryBtn } from "./_components/ui";
+import { ConfirmDialog, MoodleOriginBadge, MoodleSyncStatus, Spinner, StatusBadge, ghostBtn, iconBtn, inputCls, primaryBtn } from "./_components/ui";
 
 const TH = "text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider";
 
@@ -19,8 +19,30 @@ export default function AdminLearningPage() {
   const [category, setCategory] = useState("");
   const [status, setStatus] = useState<"" | "draft" | "published">("");
   const [deleting, setDeleting] = useState<AdminCourse | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
   const all = data ?? [];
+  // While Moodle syncs or imports run in the background, refresh so their status and content appear.
+  const pending = all.some((c) => c.moodleSync.busy || (c.origin === "moodle" && !c.moodleSync.syncedAt && !c.moodleSync.error));
+  useEffect(() => {
+    if (!pending) return;
+    const t = setTimeout(refetch, 4000);
+    return () => clearTimeout(t);
+  }, [pending, data, refetch]);
+
+  async function syncAll() {
+    setSyncing(true);
+    try {
+      const r = await adminLearningApi.syncAll();
+      const parts = [r.imported ? `${r.imported} new ${r.imported === 1 ? "course" : "courses"} imported from Moodle` : null, `${r.synced} synced`, r.failed ? `${r.failed} with problems` : null].filter(Boolean);
+      (r.failed ? toast.error : toast.success)(parts.join(" · "), { duration: 6000 });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "The sync with Moodle failed. Please try again.");
+    } finally {
+      setSyncing(false);
+      refetch();
+    }
+  }
   const categories = [...new Set(all.map((c) => c.category).filter(Boolean))] as string[];
   const term = search.trim().toLowerCase();
   const rows = all.filter((c) => (!term || c.title.toLowerCase().includes(term)) && (!category || c.category === category) && (!status || c.status === status));
@@ -38,13 +60,18 @@ export default function AdminLearningPage() {
           <h1 className="font-display text-2xl font-bold text-foreground">{SITE_NAME} Learning</h1>
           <p className="mt-0.5 text-sm text-muted-foreground">Create courses with videos, documents, lessons and quizzes for practitioners.</p>
         </div>
-        <Link href="/admin/learning/new" className={primaryBtn}><Plus size={16} /> Create course</Link>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={syncAll} disabled={syncing} className={ghostBtn} title="Import courses created in Moodle and send course content to Moodle">
+            <RefreshCw size={15} className={cn(syncing && "animate-spin")} /> {syncing ? "Syncing with Moodle…" : "Sync with Moodle"}
+          </button>
+          <Link href="/admin/learning/new" className={primaryBtn}><Plus size={16} /> Create course</Link>
+        </div>
       </div>
 
       <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
         {stats.map((s) => (
           <div key={s.label} className="rounded-2xl border border-border bg-white p-5">
-            <p className="font-display text-3xl font-bold text-foreground">{loading ? "–" : s.value}</p>
+            <p className="font-display text-3xl font-bold text-foreground">{loading && !data ? "–" : s.value}</p>
             <p className="mt-1 text-xs text-muted-foreground">{s.label}</p>
           </div>
         ))}
@@ -82,7 +109,7 @@ export default function AdminLearningPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {loading ? (
+              {loading && !data ? (
                 <tr><td colSpan={6} className="py-16"><Spinner className="mx-auto" /></td></tr>
               ) : rows.length === 0 ? (
                 <tr>
@@ -105,7 +132,14 @@ export default function AdminLearningPage() {
                       <span className="min-w-0">
                         <span className="block max-w-xs truncate font-semibold text-foreground hover:text-herb-green">{c.title}</span>
                         <span className="block text-xs text-muted-foreground">{[c.category, c.level && LEVEL_LABEL[c.level], c.instructor?.name].filter(Boolean).join(" · ") || "No category"}</span>
-                        {c.moodleStatus === "missing" && <span className="mt-0.5 block text-[11px] text-amber-700">Deleted in Moodle. Delete it here too, or recreate it.</span>}
+                        {c.moodleStatus === "missing" ? (
+                          <span className="mt-0.5 block text-[11px] text-amber-700">Deleted in Moodle. Delete it here too, or recreate it.</span>
+                        ) : (
+                          <span className="mt-1 flex flex-wrap items-center gap-2">
+                            {c.origin === "moodle" && <MoodleOriginBadge />}
+                            <MoodleSyncStatus course={c} />
+                          </span>
+                        )}
                       </span>
                     </Link>
                   </td>
@@ -118,7 +152,7 @@ export default function AdminLearningPage() {
                   <td className="whitespace-nowrap px-4 py-3.5 text-xs text-muted-foreground">{new Date(c.updatedAt).toLocaleDateString()}</td>
                   <td className="px-5 py-3.5">
                     <div className="flex items-center justify-end">
-                      <Link href={`/admin/learning/${c.id}`} className="mr-2 rounded-lg bg-herb-green/10 px-3 py-1.5 text-xs font-semibold text-herb-green hover:bg-herb-green/15">Build</Link>
+                      <Link href={`/admin/learning/${c.id}`} className="mr-2 rounded-lg bg-herb-green/10 px-3 py-1.5 text-xs font-semibold text-herb-green hover:bg-herb-green/15">{c.origin === "moodle" ? "View" : "Build"}</Link>
                       <Link href={`/admin/learning/${c.id}?tab=preview`} className={iconBtn} title="Preview" aria-label="Preview"><Eye size={16} /></Link>
                       <Link href={`/admin/learning/${c.id}/settings`} className={iconBtn} title="Edit details" aria-label="Edit details"><Pencil size={15} /></Link>
                       <button onClick={() => setDeleting(c)} className={cn(iconBtn, "hover:text-red-600")} title="Delete" aria-label="Delete"><Trash2 size={15} /></button>

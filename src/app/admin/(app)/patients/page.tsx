@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useAdminPatients, togglePatientStatusApi, createPatientApi } from "@/hooks/use-admin";
 
@@ -15,6 +15,65 @@ type CareTeamMember = {
 
 const GENDERS = ["Male", "Female", "Other"];
 
+type FamilyMemberView = {
+  id: string;
+  patientId: string | null;
+  full_name: string;
+  relationship: string;
+  genderLabel: string;
+  dobLabel: string;
+  age: number | null;
+  phone: string;
+  bloodGroup: string;
+  isActive: boolean;
+  careTeam: CareTeamMember[];
+  totalConsults: number;
+  lastVisit: string;
+  lastVisitAt: string | null;
+  addedLabel: string;
+};
+
+function formatDate(value?: string | null): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function genderLabelOf(g?: string | null): string {
+  const v = (g || "").toLowerCase();
+  if (v === "m" || v === "male") return "Male";
+  if (v === "f" || v === "female") return "Female";
+  if (!v) return "—";
+  return "Other";
+}
+
+function ageOf(dob?: string | null): number | null {
+  if (!dob) return null;
+  const d = new Date(dob);
+  if (isNaN(d.getTime())) return null;
+  return new Date().getFullYear() - d.getFullYear();
+}
+
+function buildCareTeam(consultations: any[]): CareTeamMember[] {
+  const map = new Map<string, CareTeamMember>();
+  // Oldest first so "since" is the first consultation with that doctor.
+  [...consultations]
+    .sort((a, b) => new Date(a.session_start || a.created_at).getTime() - new Date(b.session_start || b.created_at).getTime())
+    .forEach((c) => {
+      const prac = Array.isArray(c.practitioner) ? c.practitioner[0] : c.practitioner;
+      if (prac && !map.has(prac.id)) {
+        map.set(prac.id, {
+          doctorId: prac.id,
+          name: prac.full_name,
+          specialty: prac.disciplines?.[0] ?? "Ayurveda",
+          since: formatDate(c.session_start || c.created_at),
+        });
+      }
+    });
+  return Array.from(map.values());
+}
+
 const EMPTY_FORM = {
   name: "", phone: "", email: "", dob: "", gender: "Male",
   city: "", abha: false, abhaId: "",
@@ -28,6 +87,9 @@ export default function AdminPatientsPage() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [view, setView] = useState<"owners" | "everyone">("owners");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [selectedMember, setSelectedMember] = useState<{ member: FamilyMemberView; owner: any } | null>(null);
 
   if (loading) {
     return (
@@ -37,60 +99,95 @@ export default function AdminPatientsPage() {
     );
   }
 
-  // Pre-process and format patients
+  // Pre-process and format patients (account owners, each with family members)
   const processedPatients = (patients ?? []).map((p: any) => {
     const userObj = Array.isArray(p.user) ? p.user[0] : p.user;
     const isActive = userObj?.is_active ?? true;
     const status: PatientStatus = isActive ? "active" : "suspended";
-    
-    const consultationsList = p.consultations ?? [];
-    const uniqueDocsMap = new Map();
-    consultationsList.forEach((c: any) => {
-      if (c.practitioner) {
-        uniqueDocsMap.set(c.practitioner.id, {
-          doctorId: c.practitioner.id,
-          name: c.practitioner.full_name,
-          specialty: c.practitioner.disciplines?.[0] ?? "Ayurveda",
-          since: c.session_start ? new Date(c.session_start).toLocaleDateString("en-IN", { day: '2-digit', month: 'short', year: 'numeric' }) : "—",
-        });
-      }
-    });
-    const careTeam: CareTeamMember[] = Array.from(uniqueDocsMap.values());
 
-    const completedConsults = consultationsList.filter((c: any) => c.session_start);
-    const lastVisit = completedConsults.length > 0 
-      ? new Date(completedConsults.sort((a: any, b: any) => new Date(b.session_start).getTime() - new Date(a.session_start).getTime())[0].session_start).toLocaleDateString("en-IN", { day: '2-digit', month: 'short', year: 'numeric' })
-      : "—";
-
-    const genderLabel = p.gender === "M" ? "Male" : p.gender === "F" ? "Female" : "Other";
-    const dobLabel = p.date_of_birth ? new Date(p.date_of_birth).toLocaleDateString("en-IN", { day: '2-digit', month: 'short', year: 'numeric' }) : "—";
-    const registeredLabel = p.created_at ? new Date(p.created_at).toLocaleDateString("en-IN", { day: '2-digit', month: 'short', year: 'numeric' }) : "—";
+    const careTeam = buildCareTeam(p.consultations ?? []);
     const hasAbha = p.abha ? (Array.isArray(p.abha) ? p.abha.length > 0 : !!p.abha.abha_id) : false;
     const abhaIdLabel = p.abha ? (Array.isArray(p.abha) ? p.abha[0]?.abha_id : p.abha.abha_id) : "";
 
+    const familyMembers: FamilyMemberView[] = (p.familyMembers ?? []).map((fm: any) => ({
+      id: fm.id,
+      patientId: fm.patientId,
+      full_name: fm.full_name,
+      relationship: fm.relationship || "—",
+      genderLabel: genderLabelOf(fm.gender),
+      dobLabel: formatDate(fm.date_of_birth),
+      age: ageOf(fm.date_of_birth),
+      phone: fm.phone || "",
+      bloodGroup: fm.blood_group || "",
+      isActive: fm.is_active,
+      careTeam: buildCareTeam(fm.consultations ?? []),
+      totalConsults: (fm.consultations ?? []).length,
+      lastVisit: formatDate(fm.lastVisitAt),
+      lastVisitAt: fm.lastVisitAt as string | null,
+      addedLabel: formatDate(fm.created_at),
+    }));
+
+    const activeFamily = familyMembers.filter((fm) => fm.isActive);
+    const ownerLastVisitAt: string | null = p.lastVisitAt ?? null;
+    const householdLastVisitAt = [ownerLastVisitAt, ...activeFamily.map((fm) => fm.lastVisitAt)]
+      .filter(Boolean)
+      .sort((a, b) => new Date(b as string).getTime() - new Date(a as string).getTime())[0] as string | undefined;
+
     return {
       ...p,
-      genderLabel,
-      dobLabel,
-      registeredLabel,
+      genderLabel: genderLabelOf(p.gender),
+      dobLabel: formatDate(p.date_of_birth),
+      registeredLabel: formatDate(p.created_at),
       hasAbha,
       abhaIdLabel,
       status,
       userObj,
       careTeam,
-      totalConsults: consultationsList.length,
-      lastVisit,
+      totalConsults: (p.consultations ?? []).length,
+      lastVisit: formatDate(ownerLastVisitAt),
+      familyMembers,
+      activeFamily,
+      householdConsults: (p.consultations ?? []).length + activeFamily.reduce((n, fm) => n + fm.totalConsults, 0),
+      householdLastVisit: formatDate(householdLastVisitAt),
     };
   });
 
+  const q = search.trim().toLowerCase();
+  const matchesOwner = (p: any) =>
+    !q ||
+    p.full_name?.toLowerCase().includes(q) ||
+    p.userObj?.mobile?.includes(q) ||
+    p.userObj?.email?.toLowerCase().includes(q) ||
+    p.city?.toLowerCase().includes(q);
+  const matchesFamily = (fm: FamilyMemberView) =>
+    !!q && (fm.full_name?.toLowerCase().includes(q) || fm.phone.includes(q) || fm.relationship.toLowerCase().includes(q));
+
   const filtered = processedPatients.filter((p) => {
-    const matchSearch =
-      p.full_name?.toLowerCase().includes(search.toLowerCase()) ||
-      p.userObj?.mobile?.includes(search) ||
-      p.city?.toLowerCase().includes(search.toLowerCase());
+    const matchSearch = matchesOwner(p) || p.familyMembers.some(matchesFamily);
     const matchStatus = filterStatus === "all" || p.status === filterStatus;
     return matchSearch && matchStatus;
   });
+
+  // Flat "everyone" view: owners and family members as individual rows.
+  const individuals = processedPatients
+    .filter((p) => filterStatus === "all" || p.status === filterStatus)
+    .flatMap((p) => [
+      ...(matchesOwner(p) ? [{ kind: "owner" as const, owner: p }] : []),
+      ...p.familyMembers
+        .filter((fm: FamilyMemberView) => !q || matchesFamily(fm) || matchesOwner(p))
+        .map((fm: FamilyMemberView) => ({ kind: "family" as const, owner: p, member: fm })),
+    ]);
+
+  const totalFamily = processedPatients.reduce((n, p) => n + p.activeFamily.length, 0);
+
+  function toggleExpanded(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   async function toggleStatus(id: string, currentIsActive: boolean) {
     try {
@@ -132,7 +229,7 @@ export default function AdminPatientsPage() {
         <div>
           <h1 className="font-display text-2xl font-bold text-foreground">Patients</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {processedPatients.length} registered · {processedPatients.filter((p) => p.hasAbha).length} ABHA linked
+            {processedPatients.length} account owners · {totalFamily} family members · {processedPatients.filter((p) => p.hasAbha).length} ABHA linked
           </p>
         </div>
         <button
@@ -146,11 +243,28 @@ export default function AdminPatientsPage() {
       <div className="flex flex-wrap gap-3 mb-5">
         <input
           type="text"
-          placeholder="Search by name, phone, city…"
+          placeholder="Search owners or family members by name, phone, email, city…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="flex-1 min-w-48 px-3.5 py-2 text-sm border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-herb-green/20 bg-white"
         />
+        <div className="flex gap-1 bg-muted rounded-xl p-1">
+          {([
+            { id: "owners", label: "Account owners" },
+            { id: "everyone", label: "All individuals" },
+          ] as const).map((v) => (
+            <button
+              key={v.id}
+              onClick={() => setView(v.id)}
+              className={cn(
+                "px-3 py-1.5 text-xs font-semibold rounded-lg transition-all",
+                view === v.id ? "bg-white text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
         <div className="flex gap-1.5">
           {(["all", "active", "suspended"] as const).map((s) => (
             <button
@@ -169,16 +283,17 @@ export default function AdminPatientsPage() {
         </div>
       </div>
 
+      {view === "owners" ? (
       <div className="bg-white rounded-2xl border border-border overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-background">
-                <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Patient</th>
+                <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Account Owner</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Contact</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Family</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">ABHA</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">City</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Doctors</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Consults</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Last Visit</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Status</th>
@@ -186,15 +301,19 @@ export default function AdminPatientsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {filtered.map((p) => (
-                <tr key={p.id} className="hover:bg-background transition-colors">
+              {filtered.map((p) => {
+                const familyMatch = !!q && p.familyMembers.some(matchesFamily);
+                const isOpen = expanded.has(p.id) || familyMatch;
+                return (
+                <Fragment key={p.id}>
+                <tr className="hover:bg-background transition-colors">
                   <td className="px-5 py-3.5">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-xl bg-sage/10 flex items-center justify-center flex-shrink-0">
-                        <span className="text-sage text-xs font-bold">{p.full_name ? p.full_name[0] : "P"}</span>
+                        <span className="text-sage text-xs font-bold">{p.full_name ? p.full_name[0].toUpperCase() : "P"}</span>
                       </div>
                       <div>
-                        <p className="font-medium text-foreground">{p.full_name}</p>
+                        <p className="font-medium text-foreground capitalize">{p.full_name}</p>
                         <p className="text-[10px] text-muted-foreground">{p.genderLabel} · DOB {p.dobLabel}</p>
                       </div>
                     </div>
@@ -204,30 +323,40 @@ export default function AdminPatientsPage() {
                     <p className="text-[10px] text-muted-foreground">{p.userObj?.email || "—"}</p>
                   </td>
                   <td className="px-4 py-3.5">
+                    {p.familyMembers.length === 0 ? (
+                      <span className="text-[10px] text-muted-foreground">None</span>
+                    ) : (
+                      <button
+                        onClick={() => toggleExpanded(p.id)}
+                        className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full hover:bg-indigo-100 transition-colors"
+                        aria-expanded={isOpen}
+                      >
+                        {p.activeFamily.length} {p.activeFamily.length === 1 ? "member" : "members"}
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className={cn("transition-transform", isOpen && "rotate-180")}>
+                          <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                      </button>
+                    )}
+                  </td>
+                  <td className="px-4 py-3.5">
                     {p.hasAbha
-                      ? <span className="text-[10px] font-semibold text-herb-green bg-herb-green/10 px-2 py-0.5 rounded-full">✓ Linked</span>
+                      ? <span className="text-[10px] font-semibold text-herb-green bg-herb-green/10 px-2 py-0.5 rounded-full">Linked</span>
                       : <span className="text-[10px] text-muted-foreground bg-muted px-2 py-0.5 rounded-full">Not linked</span>
                     }
                   </td>
                   <td className="px-4 py-3.5 text-xs text-foreground">{p.city ?? "—"}</td>
-                  <td className="px-4 py-3.5">
-                    {p.careTeam.length === 0 ? (
-                      <span className="text-[10px] text-muted-foreground">—</span>
-                    ) : (
-                      <div className="flex flex-col gap-0.5">
-                        {p.careTeam.slice(0, 2).map((d: CareTeamMember) => (
-                          <span key={d.doctorId} className="text-[10px] text-muted-foreground truncate max-w-[120px]">
-                            {d.name.replace("Dr. ", "")}
-                          </span>
-                        ))}
-                        {p.careTeam.length > 2 && (
-                          <span className="text-[10px] text-herb-green font-medium">+{p.careTeam.length - 2} more</span>
-                        )}
-                      </div>
+                  <td className="px-4 py-3.5 text-xs text-foreground">
+                    <span className="font-semibold">{p.totalConsults}</span>
+                    {p.householdConsults !== p.totalConsults && (
+                      <span className="text-[10px] text-muted-foreground block">{p.householdConsults} household</span>
                     )}
                   </td>
-                  <td className="px-4 py-3.5 text-xs text-foreground font-semibold">{p.totalConsults}</td>
-                  <td className="px-4 py-3.5 text-xs text-muted-foreground">{p.lastVisit}</td>
+                  <td className="px-4 py-3.5 text-xs text-muted-foreground">
+                    {p.lastVisit}
+                    {p.lastVisit === "—" && p.householdLastVisit !== "—" && (
+                      <span className="text-[10px] block">Family: {p.householdLastVisit}</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3.5">
                     <span className={cn(
                       "text-[10px] font-semibold px-2.5 py-1 rounded-full capitalize",
@@ -248,7 +377,41 @@ export default function AdminPatientsPage() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                {isOpen && p.familyMembers.map((fm: FamilyMemberView) => (
+                  <tr key={fm.id} className={cn("bg-indigo-50/30 hover:bg-indigo-50/60 transition-colors", !fm.isActive && "opacity-60")}>
+                    <td className="pl-12 pr-5 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-7 h-7 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                          <span className="text-indigo-700 text-[10px] font-bold">{fm.full_name ? fm.full_name[0].toUpperCase() : "F"}</span>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-foreground capitalize flex items-center gap-1.5">
+                            {fm.full_name}
+                            <span className="text-[9px] font-semibold text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded-full capitalize">{fm.relationship}</span>
+                            {!fm.isActive && <span className="text-[9px] font-semibold text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">Removed</span>}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">{fm.genderLabel} · {fm.age !== null ? `${fm.age} y` : "—"}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <p className="text-xs text-foreground">{fm.phone || "—"}</p>
+                      <p className="text-[10px] text-muted-foreground">via {p.full_name}</p>
+                    </td>
+                    <td className="px-4 py-3 text-[10px] text-muted-foreground">Family member</td>
+                    <td className="px-4 py-3 text-[10px] text-muted-foreground">—</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">{p.city ?? "—"}</td>
+                    <td className="px-4 py-3 text-xs text-foreground font-semibold">{fm.totalConsults}</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">{fm.lastVisit}</td>
+                    <td className="px-4 py-3" />
+                    <td className="px-5 py-3 text-right">
+                      <button onClick={() => setSelectedMember({ member: fm, owner: p })} className="text-[10px] font-semibold text-herb-green hover:underline">View</button>
+                    </td>
+                  </tr>
+                ))}
+                </Fragment>
+                );
+              })}
               {filtered.length === 0 && (
                 <tr>
                   <td colSpan={9} className="px-5 py-12 text-center text-sm text-muted-foreground">No patients found</td>
@@ -258,13 +421,75 @@ export default function AdminPatientsPage() {
           </table>
         </div>
       </div>
+      ) : (
+      <div className="bg-white rounded-2xl border border-border overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-background">
+                <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Name</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Type</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Phone</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Account Owner</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Consults</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Last Visit</th>
+                <th className="text-right px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {individuals.map((row) => row.kind === "owner" ? (
+                <tr key={`o-${row.owner.id}`} className="hover:bg-background transition-colors">
+                  <td className="px-5 py-3">
+                    <p className="text-xs font-medium text-foreground capitalize">{row.owner.full_name}</p>
+                    <p className="text-[10px] text-muted-foreground">{row.owner.genderLabel} · DOB {row.owner.dobLabel}</p>
+                  </td>
+                  <td className="px-4 py-3"><span className="text-[10px] font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-full">Account owner</span></td>
+                  <td className="px-4 py-3 text-xs text-foreground">{row.owner.userObj?.mobile || "—"}</td>
+                  <td className="px-4 py-3 text-xs text-muted-foreground">—</td>
+                  <td className="px-4 py-3 text-xs font-semibold text-foreground">{row.owner.totalConsults}</td>
+                  <td className="px-4 py-3 text-xs text-muted-foreground">{row.owner.lastVisit}</td>
+                  <td className="px-5 py-3 text-right">
+                    <button onClick={() => setSelected(row.owner)} className="text-[10px] font-semibold text-herb-green hover:underline">View</button>
+                  </td>
+                </tr>
+              ) : (
+                <tr key={`f-${row.member.id}`} className={cn("hover:bg-background transition-colors", !row.member.isActive && "opacity-60")}>
+                  <td className="px-5 py-3">
+                    <p className="text-xs font-medium text-foreground capitalize">{row.member.full_name}</p>
+                    <p className="text-[10px] text-muted-foreground">{row.member.genderLabel} · {row.member.age !== null ? `${row.member.age} y` : "—"}</p>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full capitalize">Family · {row.member.relationship}</span>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-foreground">{row.member.phone || "—"}</td>
+                  <td className="px-4 py-3">
+                    <button onClick={() => setSelected(row.owner)} className="text-xs text-foreground hover:text-herb-green capitalize">{row.owner.full_name}</button>
+                    <p className="text-[10px] text-muted-foreground">{row.owner.userObj?.mobile || ""}</p>
+                  </td>
+                  <td className="px-4 py-3 text-xs font-semibold text-foreground">{row.member.totalConsults}</td>
+                  <td className="px-4 py-3 text-xs text-muted-foreground">{row.member.lastVisit}</td>
+                  <td className="px-5 py-3 text-right">
+                    <button onClick={() => setSelectedMember({ member: row.member, owner: row.owner })} className="text-[10px] font-semibold text-herb-green hover:underline">View</button>
+                  </td>
+                </tr>
+              ))}
+              {individuals.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-5 py-12 text-center text-sm text-muted-foreground">No patients found</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      )}
 
-      {/* Patient detail modal */}
+      {/* Account owner detail modal */}
       {selected && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
           <div className="bg-white rounded-2xl w-full max-w-md shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-              <h2 className="font-semibold text-foreground">Patient Details</h2>
+              <h2 className="font-semibold text-foreground">Account Owner</h2>
               <button onClick={() => setSelected(null)} className="text-muted-foreground hover:text-foreground">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                   <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -274,16 +499,15 @@ export default function AdminPatientsPage() {
             <div className="px-6 py-5">
               <div className="flex items-center gap-4 mb-5">
                 <div className="w-14 h-14 rounded-2xl bg-sage/20 flex items-center justify-center">
-                  <span className="text-sage text-xl font-bold">{selected.full_name ? selected.full_name[0] : "P"}</span>
+                  <span className="text-sage text-xl font-bold">{selected.full_name ? selected.full_name[0].toUpperCase() : "P"}</span>
                 </div>
                 <div>
-                  <h3 className="font-semibold text-foreground">{selected.full_name}</h3>
+                  <h3 className="font-semibold text-foreground capitalize">{selected.full_name}</h3>
                   <p className="text-sm text-muted-foreground">{selected.genderLabel} · {selected.city ?? "—"}</p>
                   {selected.hasAbha && <p className="text-xs text-herb-green mt-0.5">ABHA: {selected.abhaIdLabel}</p>}
                 </div>
               </div>
 
-              {/* Demographics */}
               <div className="mb-5">
                 {[
                   ["Phone", selected.userObj?.mobile ?? "—"],
@@ -292,6 +516,7 @@ export default function AdminPatientsPage() {
                   ["Registered", selected.registeredLabel],
                   ["Last Visit", selected.lastVisit],
                   ["Total Consultations", String(selected.totalConsults)],
+                  ["Household Consultations", String(selected.householdConsults)],
                 ].map(([label, val]) => (
                   <div key={label} className="flex justify-between text-xs py-1.5 border-b border-border last:border-0">
                     <span className="text-muted-foreground">{label}</span>
@@ -300,7 +525,35 @@ export default function AdminPatientsPage() {
                 ))}
               </div>
 
-              {/* Care team */}
+              {/* Family members */}
+              <div className="mb-5">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+                  Family Members · {selected.activeFamily.length}
+                </h4>
+                {selected.familyMembers.length === 0 ? (
+                  <p className="text-xs text-muted-foreground italic">No family members added</p>
+                ) : (
+                  <div className="space-y-2">
+                    {selected.familyMembers.map((fm: FamilyMemberView) => (
+                      <button
+                        key={fm.id}
+                        onClick={() => { setSelectedMember({ member: fm, owner: selected }); setSelected(null); }}
+                        className={cn("w-full text-left flex items-center gap-3 bg-background rounded-xl px-3 py-2.5 hover:bg-indigo-50/50 transition-colors", !fm.isActive && "opacity-60")}
+                      >
+                        <div className="w-7 h-7 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                          <span className="text-indigo-700 text-[10px] font-bold">{fm.full_name ? fm.full_name[0].toUpperCase() : "F"}</span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-foreground capitalize">{fm.full_name} <span className="font-normal text-muted-foreground">· {fm.relationship}</span></p>
+                          <p className="text-[10px] text-muted-foreground">{fm.phone || "No phone"} · {fm.totalConsults} consults</p>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground flex-shrink-0">{fm.isActive ? `Last: ${fm.lastVisit}` : "Removed"}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div className="mb-5">
                 <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
                   Care Team · {selected.careTeam.length} {selected.careTeam.length === 1 ? "doctor" : "doctors"}
@@ -342,6 +595,93 @@ export default function AdminPatientsPage() {
                   )}
                 >
                   {selected.status === "active" ? "Suspend Account" : "Reinstate Account"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Family member detail modal */}
+      {selectedMember && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <h2 className="font-semibold text-foreground">Family Member</h2>
+              <button onClick={() => setSelectedMember(null)} className="text-muted-foreground hover:text-foreground">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </div>
+            <div className="px-6 py-5">
+              <div className="flex items-center gap-4 mb-5">
+                <div className="w-14 h-14 rounded-2xl bg-indigo-100 flex items-center justify-center">
+                  <span className="text-indigo-700 text-xl font-bold">{selectedMember.member.full_name?.[0]?.toUpperCase() ?? "F"}</span>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-foreground capitalize">{selectedMember.member.full_name}</h3>
+                  <p className="text-sm text-muted-foreground capitalize">{selectedMember.member.relationship} of {selectedMember.owner.full_name}</p>
+                </div>
+              </div>
+
+              <div className="mb-5">
+                {[
+                  ["Phone", selectedMember.member.phone || "—"],
+                  ["Gender", selectedMember.member.genderLabel],
+                  ["Date of Birth", selectedMember.member.dobLabel],
+                  ["Blood Group", selectedMember.member.bloodGroup || "—"],
+                  ["Added", selectedMember.member.addedLabel],
+                  ["Last Visit", selectedMember.member.lastVisit],
+                  ["Total Consultations", String(selectedMember.member.totalConsults)],
+                  ["Status", selectedMember.member.isActive ? "Active" : "Removed by owner"],
+                ].map(([label, val]) => (
+                  <div key={label} className="flex justify-between text-xs py-1.5 border-b border-border last:border-0">
+                    <span className="text-muted-foreground">{label}</span>
+                    <span className="font-medium text-foreground">{val}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mb-5 rounded-xl border border-border px-4 py-3">
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Account Owner</p>
+                <p className="text-sm font-semibold text-foreground capitalize">{selectedMember.owner.full_name}</p>
+                <p className="text-xs text-muted-foreground">{selectedMember.owner.userObj?.mobile || "—"} · {selectedMember.owner.userObj?.email || "—"}</p>
+              </div>
+
+              <div className="mb-5">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+                  Care Team · {selectedMember.member.careTeam.length}
+                </h4>
+                {selectedMember.member.careTeam.length === 0 ? (
+                  <p className="text-xs text-muted-foreground italic">No consultations yet</p>
+                ) : (
+                  <div className="space-y-2">
+                    {selectedMember.member.careTeam.map((d) => (
+                      <div key={d.doctorId} className="flex items-center justify-between bg-background rounded-xl px-3 py-2.5">
+                        <div>
+                          <p className="text-xs font-semibold text-foreground">{d.name}</p>
+                          <p className="text-[10px] text-muted-foreground">{d.specialty}</p>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground">since {d.since}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setSelectedMember(null)}
+                  className="flex-1 py-2.5 border border-border rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted transition-colors"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={() => { setSelected(selectedMember.owner); setSelectedMember(null); }}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold bg-herb-green text-white hover:bg-herb-green/90 transition-all"
+                >
+                  View Account Owner
                 </button>
               </div>
             </div>

@@ -83,9 +83,14 @@ export default function InboxPage() {
 
   const activeThread = threads.find((t) => t.id === activeId) ?? null;
 
+  const activeConsultationRef = useRef<string | null>(null);
+  activeConsultationRef.current = activeThread?.consultationId ?? null;
+
   const loadMessages = useCallback(async (consultationId: string): Promise<void> => {
     try {
       const data = await fetchMessages(consultationId);
+      // A late response for a thread the user already left must not replace the open one.
+      if (activeConsultationRef.current && activeConsultationRef.current !== consultationId) return;
       setMessages(data);
     } catch (err) {
       console.error("Failed to load messages:", err);
@@ -97,13 +102,11 @@ export default function InboxPage() {
       setMessages([]);
       return;
     }
+    setMessages([]);
     void loadMessages(activeThread.consultationId);
     const interval = setInterval(() => loadMessages(activeThread.consultationId), THREAD_POLL_MS);
     return () => clearInterval(interval);
   }, [activeThread?.consultationId, loadMessages]);
-
-  const activeConsultationRef = useRef<string | null>(null);
-  activeConsultationRef.current = activeThread?.consultationId ?? null;
 
   const { inbox: inboxTopic } = useRealtimeTopics();
   useRealtimeSignal(
@@ -118,14 +121,48 @@ export default function InboxPage() {
     e.preventDefault();
     if ((!message.trim() && !file) || !activeThread || sending) return false;
     const content = message.trim();
+    const consultationId = activeThread.consultationId;
     setSendError(null);
+
+    // Refresh the thread and the inbox together once the server has the message.
+    const refresh = () => Promise.all([loadMessages(consultationId), loadInbox()]);
+
+    if (!file) {
+      // Text: show it instantly and let the user keep typing while it sends.
+      const tempId = `pending-${Date.now()}`;
+      const replyTarget = replyToId ? messages.find((m) => m.id === replyToId) : undefined;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: tempId,
+          consultationId,
+          senderName: "You",
+          direction: "doctor_to_patient",
+          content,
+          sentAt: "Sending…",
+          isRead: false,
+          attachment: null,
+          replyTo: replyTarget ? { direction: replyTarget.direction, content: replyTarget.content } : null,
+        },
+      ]);
+      setMessage("");
+      sendMessage(consultationId, content, undefined, replyToId)
+        .then(refresh)
+        .catch((err) => {
+          console.error("Failed to send message:", err);
+          setMessages((prev) => prev.filter((m) => m.id !== tempId));
+          setMessage((current) => current || content);
+          setSendError(err instanceof Error ? err.message : "Failed to send message");
+        });
+      return true;
+    }
+
     setSending(true);
     try {
-      const attachment = file ? await uploadChatAttachment(activeThread.consultationId, file) : undefined;
-      await sendMessage(activeThread.consultationId, content, attachment, replyToId);
+      const attachment = await uploadChatAttachment(consultationId, file);
+      await sendMessage(consultationId, content, attachment, replyToId);
       setMessage("");
-      await loadMessages(activeThread.consultationId);
-      await loadInbox();
+      await refresh();
       return true;
     } catch (err) {
       console.error("Failed to send message:", err);
@@ -150,7 +187,17 @@ export default function InboxPage() {
     lastMessageTime: t.lastMessageTime,
     unread: t.unread,
     unreadCount: t.unreadCount,
+    ...(t.familyOf
+      ? {
+          tag: `Family of ${t.familyOf.name}`,
+          headerContext: `${t.familyOf.relationship ? `${t.familyOf.relationship} of ` : "Family member of "}${t.familyOf.name} · replies come from ${t.familyOf.name}'s account`,
+        }
+      : {}),
   }));
+
+  const incomingSender = activeThread?.familyOf
+    ? `${activeThread.familyOf.name} (for ${activeThread.patientName})`
+    : activeThread?.patientName;
 
   const chatMessages: ChatMessage[] = messages.map((m) => ({
     id: m.id,
@@ -158,10 +205,11 @@ export default function InboxPage() {
     sentAt: m.sentAt,
     attachment: m.attachment,
     isRead: m.isRead,
-    senderName: m.direction === "doctor_to_patient" ? "You" : activeThread?.patientName,
+    // A family member has no login — their account owner writes on their behalf.
+    senderName: m.direction === "doctor_to_patient" ? "You" : incomingSender,
     replyTo: m.replyTo
       ? {
-          senderName: m.replyTo.direction === "doctor_to_patient" ? "You" : activeThread?.patientName ?? "Message",
+          senderName: m.replyTo.direction === "doctor_to_patient" ? "You" : incomingSender ?? "Message",
           content: m.replyTo.content,
         }
       : null,
@@ -188,7 +236,11 @@ export default function InboxPage() {
         sending={sending}
         headerActionLabel="View Intake"
         onHeaderAction={handleViewIntake}
-        composerHint={`Visible to patient in their ${SITE_NAME} app`}
+        composerHint={
+          activeThread?.familyOf
+            ? `About ${activeThread.patientName} · delivered to ${activeThread.familyOf.name}'s ${SITE_NAME} account (account owner)`
+            : `Visible to patient in their ${SITE_NAME} app`
+        }
         statusLine="Active patient · Bounded channel · Encrypted"
       />
     </div>

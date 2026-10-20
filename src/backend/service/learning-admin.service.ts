@@ -11,6 +11,7 @@ import { Moodle, type MoodleCourse } from "@/backend/integration/moodle/moodle.s
 import { MoodleError } from "@/backend/integration/moodle/moodle.client";
 import { getMoodleConfig } from "@/backend/integration/moodle/config";
 import { UUID, buildSections, summaries } from "./learning-common";
+import { LearningMoodleSync, toHtml } from "./learning-moodle-sync.service";
 
 /**
  * Course building. Admin roles only: every public method starts with requireAdmin, and
@@ -88,6 +89,13 @@ async function loadCourse(id: string): Promise<CourseRow> {
   return row;
 }
 
+/** Courses created in Moodle are imported from Moodle: their content is edited there, not in YurCore. */
+async function loadBuildableCourse(id: string): Promise<CourseRow> {
+  const row = await loadCourse(id);
+  if (row.origin === "moodle") throw new ValidationError("This course was created in Moodle. Edit its content in Moodle; changes appear here after a sync.");
+  return row;
+}
+
 async function loadStructure(courseId: string) {
   const [sections, content] = await Promise.all([LearningRepository.listSections([courseId]), LearningRepository.listContent([courseId])]);
   return { sections, content };
@@ -136,8 +144,6 @@ export function publishProblems(content: Pick<ContentRow, "content_type" | "titl
 }
 
 // ---------- Moodle course lifecycle ----------
-const escapeHtml = (t: string) => t.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-const toHtml = (text: string) => text.split(/\n{2,}/).filter(Boolean).map((p) => `<p>${escapeHtml(p).replace(/\n/g, "<br>")}</p>`).join("");
 
 const MOODLE_FAILED: Record<string, string> = {
   create: "The course could not be created in Moodle, so nothing was saved. Please try again.",
@@ -185,6 +191,9 @@ export class LearningAdminService {
         learners: enrollments.filter((e) => e.course_id === c.id).length,
         moodleCourseId: mid,
         moodleStatus: mid === null ? "not_linked" : moodle === null ? "unknown" : moodle.has(mid) ? "linked" : "missing",
+        origin: rows[i].origin,
+        moodleSync: { syncedAt: rows[i].moodle_synced_at, error: rows[i].moodle_sync_error, busy: LearningMoodleSync.isBusy(c.id) },
+        moodleUrl: mid === null ? null : `${getMoodleConfig().publicUrl}/course/view.php?id=${mid}`,
       };
     });
   }
@@ -192,7 +201,31 @@ export class LearningAdminService {
   // ---------- courses ----------
   static async list(user: AuthUser): Promise<AdminCourse[]> {
     requireAdmin(user);
+    // Courses created in Moodle get a row here right away; their content is imported in the background.
+    await LearningMoodleSync.discover(user.id);
     return this.toAdmin(await LearningRepository.listCourses());
+  }
+
+  /** Syncs one course with Moodle now: pushes a YurCore-built course, or re-imports a Moodle-built one. */
+  static async syncCourse(user: AuthUser, courseId: string): Promise<AdminCourse> {
+    requireAdmin(user);
+    const course = await loadCourse(courseId);
+    if (course.moodle_course_id === null) throw new ValidationError("This course is not linked to a Moodle course");
+    await LearningMoodleSync.syncCourse(courseId).catch(() => undefined); // the outcome is recorded on the course
+    return (await this.toAdmin([await loadCourse(courseId)]))[0];
+  }
+
+  /** Imports courses created in Moodle and syncs every course both ways. */
+  static async syncAll(user: AuthUser): Promise<{ imported: number; synced: number; failed: number }> {
+    requireAdmin(user);
+    if (!getMoodleConfig().configured) throw new AppError("Moodle is not configured.", 503);
+    try {
+      return await LearningMoodleSync.syncAll(user.id);
+    } catch (err) {
+      if (!(err instanceof MoodleError)) throw err;
+      console.error(`[learning] Moodle sync failed: ${err.kind} in ${err.fn}: ${err.detail ?? ""}`);
+      throw new AppError(err.kind === "unavailable" || err.kind === "timeout" ? "Moodle is not reachable. Please try again." : "Moodle refused the sync. Check the Moodle web-service token.", 502);
+    }
   }
 
   static async categories(user: AuthUser): Promise<string[]> {
@@ -238,6 +271,7 @@ export class LearningAdminService {
     }
     // A course always starts with one section so the builder is never empty.
     await LearningRepository.insertSection({ course_id: row.id, title: "Introduction", description: "", position: 0 });
+    LearningMoodleSync.schedulePush(row.id);
     return (await this.toAdmin([row]))[0];
   }
 
@@ -245,6 +279,9 @@ export class LearningAdminService {
     requireAdmin(user);
     const current = await loadCourse(courseId);
     const data = parse(courseUpdateSchema, input);
+    if (current.origin === "moodle" && ((data.title !== undefined && data.title !== current.title) || (data.description !== undefined && data.description !== current.description))) {
+      throw new ValidationError("This course was created in Moodle. Change its name and description in Moodle.");
+    }
     const patch = courseWrite(data);
     if (data.instructorId && !(await LearningRepository.getPractitioner(data.instructorId))) throw new ValidationError("Choose an instructor from the practitioner list");
 
@@ -268,6 +305,7 @@ export class LearningAdminService {
     if (Object.keys(patch).length === 0) return (await this.toAdmin([current]))[0];
     const row = await LearningRepository.updateCourse(courseId, patch);
     if (oldThumb) await LearningRepository.removeFiles([oldThumb]);
+    LearningMoodleSync.schedulePush(courseId);
     return (await this.toAdmin([row]))[0];
   }
 
@@ -286,6 +324,7 @@ export class LearningAdminService {
       await moodleStep(published ? "publish" : "unpublish", () => Moodle.updateCourse(mid, { visible: published }));
     }
     const row = await LearningRepository.updateCourse(courseId, { status: published ? "published" : "draft", published_at: published ? new Date().toISOString() : null });
+    LearningMoodleSync.schedulePush(courseId);
     return (await this.toAdmin([row]))[0];
   }
 
@@ -321,7 +360,7 @@ export class LearningAdminService {
   // ---------- uploads (browser -> Supabase Storage directly, via a signed upload URL) ----------
   static async createUpload(user: AuthUser, courseId: string, input: unknown): Promise<{ path: string; signedUrl: string; mimeType: string }> {
     requireAdmin(user);
-    await loadCourse(courseId);
+    await loadBuildableCourse(courseId);
     const data = parse(uploadRequestSchema, input);
     const mime = resolveMime(data.fileName, data.mimeType);
     if (!allowedFor(data.kind, mime)) throw new ValidationError(`This file type is not supported. Use ${UPLOAD_RULES[data.kind].label}.`);
@@ -342,11 +381,12 @@ export class LearningAdminService {
   // ---------- sections ----------
   static async addSection(user: AuthUser, courseId: string, input: unknown) {
     requireAdmin(user);
-    await loadCourse(courseId);
+    await loadBuildableCourse(courseId);
     const data = parse(sectionInputSchema, input);
     const existing = await LearningRepository.listSections([courseId]);
     const row = await LearningRepository.insertSection({ course_id: courseId, ...data, position: existing.reduce((m, s) => Math.max(m, s.position + 1), 0) });
     await LearningRepository.touchCourse(courseId);
+    LearningMoodleSync.schedulePush(courseId);
     return { id: row.id };
   }
 
@@ -360,27 +400,29 @@ export class LearningAdminService {
 
   static async updateSection(user: AuthUser, courseId: string, sectionId: string, input: unknown): Promise<void> {
     requireAdmin(user);
-    await loadCourse(courseId);
+    await loadBuildableCourse(courseId);
     await this.loadSection(courseId, sectionId);
     await LearningRepository.updateSection(sectionId, parse(sectionInputSchema.partial(), input));
     await LearningRepository.touchCourse(courseId);
+    LearningMoodleSync.schedulePush(courseId);
   }
 
   static async deleteSection(user: AuthUser, courseId: string, sectionId: string): Promise<void> {
     requireAdmin(user);
-    await loadCourse(courseId);
+    await loadBuildableCourse(courseId);
     const { sections } = await this.loadSection(courseId, sectionId);
     if (sections.length === 1) throw new ValidationError("A course needs at least one section");
     const files = (await LearningRepository.listContent([courseId])).filter((c) => c.section_id === sectionId).map((c) => c.storage_path ?? "");
     await LearningRepository.deleteSection(sectionId);
     await LearningRepository.removeFiles(files);
     await LearningRepository.touchCourse(courseId);
+    LearningMoodleSync.schedulePush(courseId);
   }
 
   /** Saves the complete order: sections, and which items are in which section in which order. */
   static async saveLayout(user: AuthUser, courseId: string, input: unknown): Promise<void> {
     requireAdmin(user);
-    await loadCourse(courseId);
+    await loadBuildableCourse(courseId);
     const data = parse(layoutSchema, input);
     const { sections, content } = await loadStructure(courseId);
     const sectionIds = data.sections.map((s) => s.id);
@@ -394,6 +436,7 @@ export class LearningAdminService {
       data.sections.flatMap((s) => s.items.map((id, i) => ({ id, section_id: s.id, position: i }))),
     );
     await LearningRepository.touchCourse(courseId);
+    LearningMoodleSync.schedulePush(courseId);
   }
 
   // ---------- content ----------
@@ -424,7 +467,7 @@ export class LearningAdminService {
 
   static async addContent(user: AuthUser, courseId: string, input: unknown): Promise<{ id: string }> {
     requireAdmin(user);
-    await loadCourse(courseId);
+    await loadBuildableCourse(courseId);
     const data = parse(contentInputSchema, input);
     await this.loadSection(courseId, data.sectionId);
     if (isFileType(data.type) && !data.file) throw new ValidationError("Upload a file for this item");
@@ -451,6 +494,7 @@ export class LearningAdminService {
       throw err;
     }
     await LearningRepository.touchCourse(courseId);
+    LearningMoodleSync.schedulePush(courseId);
     return { id: row.id };
   }
 
@@ -463,7 +507,7 @@ export class LearningAdminService {
 
   static async updateContent(user: AuthUser, courseId: string, contentId: string, input: unknown): Promise<{ id: string }> {
     requireAdmin(user);
-    await loadCourse(courseId);
+    await loadBuildableCourse(courseId);
     const current = await this.loadContent(courseId, contentId);
     const data = parse(contentUpdateSchema, input);
     if (current.content_type === "lesson" && data.body !== undefined && !data.body?.trim()) throw new ValidationError("Write the lesson text");
@@ -480,16 +524,18 @@ export class LearningAdminService {
     // A replaced or removed file is deleted from storage once the row points elsewhere.
     if ("storage_path" in files && current.storage_path && current.storage_path !== files.storage_path) await LearningRepository.removeFiles([current.storage_path]);
     await LearningRepository.touchCourse(courseId);
+    LearningMoodleSync.schedulePush(courseId);
     return { id: contentId };
   }
 
   static async deleteContent(user: AuthUser, courseId: string, contentId: string): Promise<void> {
     requireAdmin(user);
-    await loadCourse(courseId);
+    await loadBuildableCourse(courseId);
     const current = await this.loadContent(courseId, contentId);
     await LearningRepository.deleteContent(contentId);
     if (current.storage_path) await LearningRepository.removeFiles([current.storage_path]);
     await LearningRepository.touchCourse(courseId);
+    LearningMoodleSync.schedulePush(courseId);
   }
 
   // ---------- learners ----------

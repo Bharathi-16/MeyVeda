@@ -179,7 +179,7 @@ export default function DiscoverPage() {
       isVerified: true,
       fee: Math.round((doc.consultation_fee ?? 0) / 100),
       nextAvailable: "Today",
-      consultModes: ["video", "clinic"] as ("video" | "clinic")[],
+      consultModes: (doc.consult_modes?.length ? doc.consult_modes : ["clinic"]) as ("video" | "clinic")[],
       avatar: initials,
       hprId: doc.verifications?.[0]?.hpr_id || "HPR-PENDING",
       languages: doc.languages || ["English"],

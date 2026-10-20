@@ -20,17 +20,21 @@ function formatRupees(paise: number): string {
  * same shape produced by ConsultationService.getConsultationInvoiceData and
  * consumed by InvoicePdfDocument.
  */
-export async function sendPostConsultationEmails(data: any): Promise<void> {
+/** For a family member (no login/email), the account owner who receives their emails. */
+export type ConsultationEmailRecipient = { email: string; name: string };
+
+export async function sendPostConsultationEmails(data: any, recipient?: ConsultationEmailRecipient | null): Promise<void> {
   const patient = getFirst(data?.patients) as any;
   const practitioner = getFirst(data?.practitioners) as any;
   const patientUser = getFirst(patient?.user) as any;
-  const patientEmail: string | undefined = patientUser?.email;
+  const patientEmail: string | undefined = patientUser?.email || recipient?.email;
 
   if (!patientEmail) {
     return;
   }
 
-  const patientName = patient?.full_name || "Patient";
+  // Addressed to the account owner when the visit was for a family member.
+  const patientName = (!patientUser?.email && recipient?.name) || patient?.full_name || "Patient";
   const practitionerName = practitioner?.full_name || "Practitioner";
   const dateStr = data?.created_at
     ? new Date(data.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
@@ -54,7 +58,7 @@ export async function sendPostConsultationEmails(data: any): Promise<void> {
       : null,
   });
 
-  await sendInvoiceEmail(data);
+  await sendInvoiceEmail(data, recipient);
 }
 
 /**
@@ -62,17 +66,17 @@ export async function sendPostConsultationEmails(data: any): Promise<void> {
  * after a consultation is finalized and by the manual "Email Invoice"
  * action in InvoiceDialog.
  */
-export async function sendInvoiceEmail(data: any): Promise<void> {
+export async function sendInvoiceEmail(data: any, recipient?: ConsultationEmailRecipient | null): Promise<void> {
   const patient = getFirst(data?.patients) as any;
   const practitioner = getFirst(data?.practitioners) as any;
   const patientUser = getFirst(patient?.user) as any;
-  const patientEmail: string | undefined = patientUser?.email;
+  const patientEmail: string | undefined = patientUser?.email || recipient?.email;
 
   if (!patientEmail) {
     return;
   }
 
-  const patientName = patient?.full_name || "Patient";
+  const patientName = (!patientUser?.email && recipient?.name) || patient?.full_name || "Patient";
   const practitionerName = practitioner?.full_name || "Practitioner";
   const dateStr = data?.created_at
     ? new Date(data.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })

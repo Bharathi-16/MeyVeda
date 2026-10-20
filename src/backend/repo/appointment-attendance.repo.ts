@@ -170,12 +170,17 @@ export class AppointmentAttendanceRepository {
     const [recipient, { data: practitionerRow }] = await Promise.all([
       this.resolveMissedNoticeRecipient(appt.patient_id),
       appt.practitioner_id
-        ? supabase.from("practitioners").select("full_name").eq("id", appt.practitioner_id).maybeSingle()
+        ? supabase.from("practitioners").select("full_name, user:users!practitioners_user_id_fkey ( email )").eq("id", appt.practitioner_id).maybeSingle()
         : Promise.resolve({ data: null }),
     ]);
-    if (!recipient) return;
+    if (!recipient) {
+      console.warn("[AppointmentAttendanceRepository] No recipient found for missed-appointment notice:", appt.id);
+      return;
+    }
 
     const practitionerName = (practitionerRow as { full_name?: string } | null)?.full_name || "your practitioner";
+    const practitionerUser = (practitionerRow as { user?: { email?: string } | { email?: string }[] | null } | null)?.user;
+    const practitionerEmail = Array.isArray(practitionerUser) ? practitionerUser[0]?.email : practitionerUser?.email;
     const formattedDate = new Date(`${appt.scheduled_date}T00:00:00`).toLocaleDateString("en-US", {
       month: "long",
       day: "numeric",
@@ -197,17 +202,33 @@ export class AppointmentAttendanceRepository {
       console.error("[AppointmentAttendanceRepository] Error inserting missed appointment notification:", notifError.message);
     }
 
-    if (recipient.email) {
-      await EmailService.sendAppointmentMissed(recipient.email, {
-        patientName: recipient.name,
-        practitionerName,
-        date: formattedDate,
-        time: apptTime,
-        missedBy,
-        familyMemberName: recipient.familyMemberName,
-        patientLeft,
-      });
-    }
+    // Emails to both sides run in parallel and never fail the status change.
+    await Promise.all([
+      recipient.email
+        ? EmailService.sendAppointmentMissed(recipient.email, {
+            patientName: recipient.name,
+            practitionerName,
+            date: formattedDate,
+            time: apptTime,
+            missedBy,
+            familyMemberName: recipient.familyMemberName,
+            patientLeft,
+          })
+        : Promise.resolve(
+            console.warn("[AppointmentAttendanceRepository] Patient has no email for missed-appointment notice:", appt.id),
+          ),
+      practitionerEmail
+        ? EmailService.sendAppointmentMissedToPractitioner(practitionerEmail, {
+            practitionerName: practitionerName.replace(/^Dr\.?\s*/i, ""),
+            patientName: recipient.familyMemberName || recipient.name,
+            date: formattedDate,
+            time: apptTime,
+            mode: appt.mode,
+            missedBy,
+            patientLeft,
+          })
+        : Promise.resolve(),
+    ]);
   }
 
   /**

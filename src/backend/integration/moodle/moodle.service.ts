@@ -86,6 +86,8 @@ export type CourseStructure = { sections: number; activities: number; quizzes: n
 export type MoodleCategory = { id: number; name: string };
 export type ActivityStatus = { cmid: number; state: number; tracked: boolean };
 export type ActivityGrade = { cmid: number; grade: string; percentage: string; max: number };
+/** A file of an activity as listed by core_course_get_contents (fileurl needs the token: use downloadFile). */
+export type MoodleFile = { filename: string; mimetype: string; filesize: number; fileurl: string; timemodified: number };
 
 export function generatePassword(): string {
   // Meets Moodle's default policy (upper, lower, digit, symbol, >= 8 chars).
@@ -198,6 +200,64 @@ export const Moodle = {
     const res = await callMoodle<{ courses: any[] }>("core_course_get_courses_by_field", { field: "ids", value: ids.join(",") });
     for (const c of res.courses ?? []) map.set(c.id, toCourse(c));
     return map;
+  },
+
+  /** Every real course in Moodle (the site front page is not a course). */
+  async getAllCourses(): Promise<MoodleCourse[]> {
+    const res = await callMoodle<{ courses: any[] }>("core_course_get_courses_by_field", {});
+    return (res.courses ?? []).filter((c) => c.format !== "site" && c.id !== 1).map(toCourse);
+  },
+
+  /** Files of every activity, keyed by cmid (page content, uploaded resources). */
+  async getActivityFiles(courseId: number): Promise<Map<number, MoodleFile[]>> {
+    const res = await callMoodle<{ modules: { id: number; contents?: any[] }[] }[]>("core_course_get_contents", { courseid: courseId });
+    const map = new Map<number, MoodleFile[]>();
+    for (const s of res) {
+      for (const m of s.modules ?? []) {
+        map.set(
+          m.id,
+          (m.contents ?? [])
+            .filter((f) => f.type === "file" && f.fileurl)
+            .map((f) => ({ filename: f.filename, mimetype: f.mimetype ?? "", filesize: Number(f.filesize ?? 0), fileurl: f.fileurl, timemodified: Number(f.timemodified ?? 0) })),
+        );
+      }
+    }
+    return map;
+  },
+
+  /** Downloads a Moodle file server-side; the host in Moodle data is never trusted (rebuilt on our base). */
+  async downloadFile(fileUrl: string): Promise<{ data: ArrayBuffer; type: string }> {
+    const cfg = getMoodleConfig();
+    if (!cfg.configured) throw new MoodleError("not_configured", "download");
+    const at = fileUrl.indexOf("/webservice/pluginfile.php/");
+    const at2 = at < 0 ? fileUrl.indexOf("/pluginfile.php/") : -1;
+    if (at < 0 && at2 < 0) throw new MoodleError("rejected", "download", "not a Moodle file URL");
+    const u = new URL(cfg.baseUrl + (at >= 0 ? fileUrl.slice(at) : "/webservice" + fileUrl.slice(at2)));
+    u.searchParams.set("token", cfg.token);
+    let res: Response;
+    try {
+      res = await fetch(u, { cache: "no-store", signal: AbortSignal.timeout(cfg.timeoutMs * 30) });
+    } catch (err) {
+      throw new MoodleError("unavailable", "download", err instanceof Error ? err.message : undefined);
+    }
+    const type = res.headers.get("content-type") ?? "";
+    // Moodle answers access errors with a JSON body instead of the file.
+    if (!res.ok || type.startsWith("application/json")) throw new MoodleError("rejected", "download", `HTTP ${res.status}`);
+    return { data: await res.arrayBuffer(), type };
+  },
+
+  /** Current values of an activity's settings (intro, dates, quiz options...), read from its Moodle form. */
+  async getActivityValues(courseId: number, cmid: number): Promise<Record<string, unknown>> {
+    const form = await this.getActivityForm(courseId, { cmid });
+    const out: Record<string, unknown> = {};
+    const walk = (els: FormElement[]) => {
+      for (const e of els) {
+        if (e.type === "group") walk(e.elements ?? []);
+        else if (e.name) out[e.name] = e.value;
+      }
+    };
+    for (const sec of form.sections) walk(sec.elements);
+    return out;
   },
 
   // ---- Course structure and activities (YurCore bridge plugin) ----

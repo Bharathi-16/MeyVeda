@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createHmac } from "crypto";
+import { after } from "next/server";
 
 /**
  * Instant "something changed" signals for chat screens, over Supabase Realtime
@@ -32,6 +33,24 @@ export const RealtimeTopics = {
 };
 
 export type RealtimeEvent = "message" | "read" | "reaction";
+
+/**
+ * Schedules the broadcast to run after the HTTP response has been sent, so
+ * the sender's request returns as soon as the write is done instead of
+ * waiting on the Realtime round-trip. Falls back to an immediate
+ * fire-and-forget broadcast outside a request scope.
+ */
+export function broadcastSignalAfterResponse(topics: string[] | (() => Promise<string[]>), event: RealtimeEvent): void {
+  const run = async () => {
+    const resolved = typeof topics === "function" ? await topics() : topics;
+    await broadcastSignal(resolved, event);
+  };
+  try {
+    after(run);
+  } catch {
+    void run();
+  }
+}
 
 /**
  * Best-effort broadcast — never throws, so a Realtime hiccup can't fail the

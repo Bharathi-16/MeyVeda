@@ -60,6 +60,7 @@ export class BookingService {
     if (emailDetails) {
       await EmailService.sendAppointmentBooked(emailDetails.patientEmail, {
         patientName: emailDetails.patientName,
+        familyMemberName: emailDetails.familyMemberName,
         practitionerName: emailDetails.practitionerName,
         date: formatDisplayDate(emailDetails.scheduledDate),
         time: formatDisplayTime(emailDetails.scheduledTime),
@@ -97,6 +98,7 @@ export class BookingService {
     if (emailDetails) {
       await EmailService.sendAppointmentCancelled(emailDetails.patientEmail, {
         patientName: emailDetails.patientName,
+        familyMemberName: emailDetails.familyMemberName,
         practitionerName: emailDetails.practitionerName,
         date: formatDisplayDate(emailDetails.scheduledDate),
         time: formatDisplayTime(emailDetails.scheduledTime),

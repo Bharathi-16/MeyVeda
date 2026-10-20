@@ -9,6 +9,18 @@ export async function fetchDetailedConsultations(familyMemberId?: string | null)
   return response.data;
 }
 
+/** Consultation/prescription totals for the account owner and their family members. */
+export function usePatientRecordStats(patientId: string | undefined) {
+  return useQuery<{ consultations: number; prescriptions: number }>(
+    async () => {
+      if (!patientId) return { consultations: 0, prescriptions: 0 };
+      const response = await apiClient<{ data: { consultations: number; prescriptions: number } }>("/api/consultations/stats");
+      return response.data;
+    },
+    [patientId]
+  );
+}
+
 export function usePatientUpcomingCalls(patientId: string | undefined) {
   return useQuery<any[]>(
     async () => {

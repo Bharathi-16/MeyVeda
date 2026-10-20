@@ -10,6 +10,8 @@ export type InboxThread = {
   unread: boolean;
   unreadCount: number;
   consultationId: string;
+  /** Set when the patient is a family member: the account owner who reads and replies for them. */
+  familyOf?: { patientId: string; name: string; relationship?: string } | null;
 };
 
 function timeAgo(dateStr: string): string {
@@ -58,6 +60,31 @@ export class ProInboxRepository {
       throw new Error("Failed to fetch inbox from database");
     }
 
+    // Family members have no login — their messages are read and answered by
+    // the account owner, so the doctor needs to see whose family they belong to.
+    const patientIds = Array.from(new Set((consults ?? []).map((c: any) => c.patient_id).filter(Boolean)));
+    const familyOfByPatientId = new Map<string, { patientId: string; name: string; relationship?: string }>();
+    if (patientIds.length > 0) {
+      const { data: familyRows } = await supabase
+        .from("family_members")
+        .select("patient_id, owner_patient_id, relationship")
+        .in("patient_id", patientIds);
+      const ownerIds = Array.from(new Set((familyRows ?? []).map((f: any) => f.owner_patient_id).filter(Boolean)));
+      const { data: owners } = ownerIds.length
+        ? await supabase.from("patients").select("id, full_name").in("id", ownerIds)
+        : { data: [] as any[] };
+      const ownerName = new Map<string, string>((owners ?? []).map((o: any) => [o.id, o.full_name || "Account owner"]));
+      for (const f of familyRows ?? []) {
+        if (f.patient_id && f.owner_patient_id) {
+          familyOfByPatientId.set(f.patient_id, {
+            patientId: f.owner_patient_id,
+            name: ownerName.get(f.owner_patient_id) ?? "Account owner",
+            relationship: f.relationship || undefined,
+          });
+        }
+      }
+    }
+
     return (consults ?? [])
       .map((c: any) => {
         const msgs = (c.messages ?? []).sort((a: any, b: any) =>
@@ -73,12 +100,13 @@ export class ProInboxRepository {
           patientName: name,
           patientInitials: name.split(" ").filter((w: string) => w).map((w: string) => w[0]).join("").slice(0, 2).toUpperCase(),
           lastMessage: last
-            ? last.content || (last.attachment_path ? (String(last.attachment_type).startsWith("image/") ? "📷 Photo" : "📄 Document") : "")
+            ? last.content || (last.attachment_path ? (String(last.attachment_type).startsWith("image/") ? "Photo" : "Document") : "")
             : "Start the conversation",
           lastMessageTime: sortTime ? timeAgo(sortTime) : "",
           unread: unreadCount > 0,
           unreadCount,
           consultationId: c.id,
+          familyOf: familyOfByPatientId.get(c.patient_id) ?? null,
           _sortTime: sortTime,
         };
       })

@@ -16,3 +16,19 @@ export function resolveActiveFeeRupees(
   const clinic = Math.round((baseClinicFeePaise ?? 0) / 100);
   return ENABLE_VIDEO_CONSULTATION ? video || clinic : clinic || video;
 }
+
+/**
+ * The consultation modes a practitioner actually offers. Bookable slots are
+ * generated per mode only when that mode's fee is set (see
+ * AvailabilityRepository slot generation), so the fees are the source of
+ * truth for "Video & In-Clinic" / "Video Only" / "In-Clinic Only".
+ */
+export function resolveConsultModes(
+  baseVideoFeePaise?: number | null,
+  baseClinicFeePaise?: number | null
+): ("video" | "clinic")[] {
+  const modes: ("video" | "clinic")[] = [];
+  if (ENABLE_VIDEO_CONSULTATION && (baseVideoFeePaise ?? 0) > 0) modes.push("video");
+  if ((baseClinicFeePaise ?? 0) > 0) modes.push("clinic");
+  return modes.length > 0 ? modes : ["clinic"];
+}

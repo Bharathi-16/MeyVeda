@@ -10,9 +10,18 @@ export type NotificationRow = {
   type: string;
   isRead: boolean;
   deepLink: string | null;
+  referenceId?: string | null;
+  referenceType?: string | null;
   createdAt: string;
   timeAgo: string;
 };
+
+/** Fired after notifications are marked read so the header bell refreshes immediately. */
+export const NOTIFICATIONS_CHANGED_EVENT = "yurcore:notifications-changed";
+
+export function emitNotificationsChanged() {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED_EVENT));
+}
 
 export function useNotifications(userId: string | undefined) {
   return useQuery<NotificationRow[]>(

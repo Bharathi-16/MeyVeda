@@ -12,6 +12,10 @@ export type ChatThread = {
   lastMessageTime: string;
   unread: boolean;
   unreadCount: number;
+  /** Short label shown beside the name, e.g. "Family of sridhar" or "For sam". */
+  tag?: string;
+  /** Replaces the status line in the conversation header for this thread. */
+  headerContext?: string;
 };
 
 export type ChatMessage = {
@@ -87,7 +91,7 @@ export function ChatInboxShell({
   const filteredThreads = useMemo(() => {
     if (!search.trim()) return threads;
     const q = search.trim().toLowerCase();
-    return threads.filter((t) => t.name.toLowerCase().includes(q));
+    return threads.filter((t) => t.name.toLowerCase().includes(q) || (t.tag ?? "").toLowerCase().includes(q));
   }, [threads, search]);
 
   useEffect(() => {
@@ -198,6 +202,11 @@ export function ChatInboxShell({
                   )}>
                     {thread.lastMessage}
                   </p>
+                  {thread.tag && (
+                    <span className="inline-flex items-center mt-1.5 text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full capitalize max-w-full truncate">
+                      {thread.tag}
+                    </span>
+                  )}
                 </div>
                 {thread.unreadCount === 1 && (
                   <span className="w-2.5 h-2.5 rounded-full bg-herb-green flex-shrink-0 mt-2" />
@@ -230,8 +239,15 @@ export function ChatInboxShell({
                 <span className="text-white font-bold text-[11px] font-display">{activeThread.initials}</span>
               </div>
               <div className="min-w-0">
-                <h2 className="text-sm font-bold text-foreground leading-tight truncate">{activeThread.name}</h2>
-                <p className="text-[10.5px] text-muted-foreground">{statusLine}</p>
+                <div className="flex items-center gap-2 min-w-0">
+                  <h2 className="text-sm font-bold text-foreground leading-tight truncate">{activeThread.name}</h2>
+                  {activeThread.tag && (
+                    <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full capitalize whitespace-nowrap">
+                      {activeThread.tag}
+                    </span>
+                  )}
+                </div>
+                <p className="text-[10.5px] text-muted-foreground truncate">{activeThread.headerContext ?? statusLine}</p>
               </div>
             </div>
 

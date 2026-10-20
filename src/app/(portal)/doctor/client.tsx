@@ -221,6 +221,7 @@ export default function DoctorProfileClient() {
 
   const [selectedDateState, setSelectedDateState] = useState("");
   const [selectedSlot, setSelectedSlot] = useState<{ id: string; startTime: string; timeValue: string; modes: ("video" | "clinic")[]; } | null>(null);
+  const [isStartingBooking, setIsStartingBooking] = useState(false);
 
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
@@ -701,17 +702,7 @@ export default function DoctorProfileClient() {
                           return (
                             <button
                               key={slot.id}
-                              onClick={() => {
-                                setSelectedSlot(slot);
-                                void goToBooking({
-                                  doctorId: doctor.id,
-                                  slotId: slot.id,
-                                  slot: slot.startTime,
-                                  date: selectedDate,
-                                  mode: slotModes[0],
-                                  availableModes: slotModes,
-                                });
-                              }}
+                              onClick={() => setSelectedSlot({ ...slot, modes: slotModes })}
                               className={cn(
                                 "text-[11px] px-3 py-1.5 rounded-xl border transition-all duration-200 cursor-pointer active:scale-95",
                                 baseClass
@@ -732,9 +723,38 @@ export default function DoctorProfileClient() {
 
             {/* Booking action panel */}
             <div className="pt-4 border-t border-neutral-100 select-none">
-              <div className="w-full py-3.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 bg-neutral-100 text-neutral-400 border border-neutral-200/60">
-                <span>Select a Time Slot</span>
-              </div>
+              <button
+                type="button"
+                disabled={!canBook || isStartingBooking}
+                onClick={async () => {
+                  if (!selectedSlot || !doctor) return;
+                  setIsStartingBooking(true);
+                  await goToBooking({
+                    doctorId: doctor.id,
+                    slotId: selectedSlot.id,
+                    slot: selectedSlot.startTime,
+                    date: selectedDate,
+                    mode: selectedSlot.modes[0],
+                    availableModes: selectedSlot.modes,
+                  });
+                  setIsStartingBooking(false);
+                }}
+                className={cn(
+                  "w-full py-3.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 border",
+                  canBook
+                    ? "bg-herb-green hover:bg-herb-green-light text-white border-herb-green shadow-xs hover:shadow-md active:scale-[0.99] cursor-pointer"
+                    : "bg-neutral-100 text-neutral-400 border-neutral-200/60 cursor-not-allowed"
+                )}
+              >
+                {canBook ? (
+                  <>
+                    <span>{isStartingBooking ? "Please wait…" : `Continue with ${selectedSlot?.startTime}`}</span>
+                    {!isStartingBooking && <ChevronRight size={14} />}
+                  </>
+                ) : (
+                  <span>Select a Time Slot</span>
+                )}
+              </button>
             </div>
           </div>
         </div>

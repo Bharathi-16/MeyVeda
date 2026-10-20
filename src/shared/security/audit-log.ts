@@ -1,6 +1,8 @@
 import "server-only";
 
+import { after, type NextRequest } from "next/server";
 import { createClient } from "../db/supabase.server";
+import { getRequestIp, getRequestUserAgent } from "./request-meta";
 
 export type AuditLogEntry = {
   userId: string;
@@ -102,5 +104,29 @@ export async function writeAuditLog(entry: AuditLogEntry): Promise<void> {
     }
   } catch (err: any) {
     console.error("[AUDIT_LOG] Unexpected database logging error:", err?.message || err);
+  }
+}
+
+/**
+ * Records an audit event for the current request without delaying the
+ * response — the insert runs after the response is sent (Next.js `after`),
+ * falling back to fire-and-forget outside a request scope. Never throws.
+ */
+export function auditRequest(
+  req: NextRequest,
+  actor: { id: string; role: string },
+  entry: Omit<AuditLogEntry, "userId" | "role" | "ipAddress" | "userAgent">,
+): void {
+  const full: AuditLogEntry = {
+    ...entry,
+    userId: actor.id,
+    role: actor.role,
+    ipAddress: getRequestIp(req),
+    userAgent: getRequestUserAgent(req),
+  };
+  try {
+    after(() => writeAuditLog(full));
+  } catch {
+    void writeAuditLog(full);
   }
 }

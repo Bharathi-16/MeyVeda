@@ -150,9 +150,37 @@ function PrescriptionsContent() {
     };
   });
 
+  // Family members' patient ids, from the prescription rows themselves
+  // (ownerPatient) as well as the registry lookup.
+  const familyPatientIds = new Set<string>(dependentPatientIds);
+  rxs.forEach((rx) => {
+    if (rx.ownerPatient && rx.patientId) familyPatientIds.add(rx.patientId);
+  });
+
+  const familyPatientIdsKey = Array.from(familyPatientIds).sort().join(",");
+
   // Account owners only — dependents (family members) are shown within
   // their owner's "Family Members" card instead of the top-level directory.
-  const ownerPatients = uniquePatients.filter(p => !dependentPatientIds.has(p.id));
+  // When only a family member has been consulted so far, their owner has no
+  // prescriptions of their own, so add the owner from the dependent's row —
+  // otherwise the family member's record would have no way to be reached.
+  const ownerPatients = uniquePatients.filter(p => !familyPatientIds.has(p.id));
+  filteredRxs.forEach((rx) => {
+    const owner = rx.ownerPatient;
+    if (!owner || ownerPatients.some(p => p.id === owner.id)) return;
+    const dependentsCount = filteredRxs.filter((r) => r.ownerPatient?.id === owner.id).length;
+    ownerPatients.push({
+      id: owner.id,
+      name: owner.name,
+      initials: owner.name.split(" ").filter(Boolean).map((w: string) => w[0]).join("").slice(0, 2).toUpperCase() || "P",
+      gender: owner.gender,
+      age: owner.age,
+      phone: owner.phone || "—",
+      consultationsCount: 0,
+      familyRecordsCount: dependentsCount,
+      list: [] as any[],
+    } as any);
+  });
 
   // Filter patient list based on search
   const filteredPatients = ownerPatients.filter(p =>
@@ -165,6 +193,7 @@ function PrescriptionsContent() {
   // appear in `uniquePatients`, which is built purely from prescription rows).
   const activePatient =
     uniquePatients.find(p => p.id === selectedPatientId) ||
+    ownerPatients.find(p => p.id === selectedPatientId) ||
     (viewedFamilyMember?.patientId === selectedPatientId
       ? {
           id: viewedFamilyMember.patientId,
@@ -183,6 +212,7 @@ function PrescriptionsContent() {
     if (ownerPatients.length > 0) {
       const exists =
         uniquePatients.some(p => p.id === selectedPatientId) ||
+        ownerPatients.some(p => p.id === selectedPatientId) ||
         viewedFamilyMember?.patientId === selectedPatientId;
       if (!exists) {
         setSelectedPatientId(ownerPatients[0].id);
@@ -194,7 +224,7 @@ function PrescriptionsContent() {
 
   // Load the selected account owner's family members.
   useEffect(() => {
-    if (!activePatient || dependentPatientIds.has(activePatient.id)) {
+    if (!activePatient || familyPatientIds.has(activePatient.id)) {
       setFamilyMembers([]);
       return;
     }
@@ -210,7 +240,7 @@ function PrescriptionsContent() {
     return () => {
       cancelled = true;
     };
-  }, [activePatient?.id, dependentPatientIds]);
+  }, [activePatient?.id, familyPatientIdsKey]);
 
   function handleSelectFamilyMember(fm: FamilyMember) {
     const existing = uniquePatients.find(p => p.id === fm.patientId);
@@ -383,7 +413,9 @@ function PrescriptionsContent() {
                       ? "bg-indigo-100 text-indigo-800 border-indigo-200"
                       : "bg-slate-50 text-slate-500 border-slate-200"
                   )}>
-                    {p.consultationsCount} Records
+                    {(p as any).familyRecordsCount
+                      ? `${(p as any).familyRecordsCount} Family ${(p as any).familyRecordsCount === 1 ? "Record" : "Records"}`
+                      : `${p.consultationsCount} Records`}
                   </span>
                 </div>
               );

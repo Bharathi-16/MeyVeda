@@ -13,6 +13,10 @@ import {
   appointmentMissedTemplate,
   type AppointmentMissedTemplateInput,
 } from "@/lib/email/templates/appointment-missed";
+import {
+  appointmentMissedPractitionerTemplate,
+  type AppointmentMissedPractitionerTemplateInput,
+} from "@/lib/email/templates/appointment-missed-practitioner";
 import { invoiceTemplate, type InvoiceTemplateInput } from "@/lib/email/templates/invoice";
 import {
   prescriptionTemplate,
@@ -61,6 +65,19 @@ export class EmailService {
       await EmailRepository.sendEmail({ to, subject, html, text });
     } catch (error) {
       console.error("[EmailService] sendAppointmentMissed failed:", error);
+    }
+  }
+
+  static async sendAppointmentMissedToPractitioner(
+    to: string,
+    input: AppointmentMissedPractitionerTemplateInput,
+  ): Promise<void> {
+    if (!to) return;
+    try {
+      const { subject, html, text } = appointmentMissedPractitionerTemplate(input);
+      await EmailRepository.sendEmail({ to, subject, html, text });
+    } catch (error) {
+      console.error("[EmailService] sendAppointmentMissedToPractitioner failed:", error);
     }
   }
 

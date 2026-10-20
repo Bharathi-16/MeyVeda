@@ -14,6 +14,20 @@ export type MessageRow = {
 
 export const CHAT_ATTACHMENT_BUCKET = "chat-attachments";
 
+async function signAttachmentPaths(supabase: any, paths: string[]): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  if (paths.length === 0) return result;
+  const { data, error } = await supabase.storage.from(CHAT_ATTACHMENT_BUCKET).createSignedUrls(paths, 3600);
+  if (error) {
+    console.error("[MessageRepository] Error signing attachment URLs:", error.message);
+    return result;
+  }
+  for (const item of data ?? []) {
+    if (item?.path && item?.signedUrl) result.set(item.path, item.signedUrl);
+  }
+  return result;
+}
+
 export class MessageRepository {
   static async getPatientIdFromUserId(userId: string): Promise<string | null> {
     const supabase = await createClient();
@@ -60,9 +74,47 @@ export class MessageRepository {
     return data;
   }
 
+  /**
+   * The account that reads a patient's messages: the patient themself, or —
+   * for a family member (no login) — their account owner. Returns patients.id.
+   */
+  static async getInboxOwnerPatientId(patientId: string): Promise<string> {
+    const supabase = await createClient();
+    const { data } = await supabase
+      .from("family_members")
+      .select("owner_patient_id")
+      .eq("patient_id", patientId)
+      .limit(1)
+      .maybeSingle();
+    return data?.owner_patient_id ?? patientId;
+  }
+
+  /** Whether patientId is the owner themself or one of their active family members. */
+  static async isOwnOrFamilyPatient(ownerPatientId: string, patientId: string): Promise<boolean> {
+    if (ownerPatientId === patientId) return true;
+    const supabase = await createClient();
+    const { data } = await supabase
+      .from("family_members")
+      .select("id")
+      .eq("owner_patient_id", ownerPatientId)
+      .eq("patient_id", patientId)
+      .eq("is_active", true)
+      .limit(1)
+      .maybeSingle();
+    return Boolean(data);
+  }
+
   static async getRelatedConsultationIds(consultationId: string): Promise<string[]> {
     const participants = await this.getConsultationParticipants(consultationId);
     if (!participants) return [consultationId];
+    return this.getRelatedConsultationIdsFor(participants, consultationId);
+  }
+
+  /** Same as getRelatedConsultationIds when the participants are already known. */
+  static async getRelatedConsultationIdsFor(
+    participants: { patient_id: string; practitioner_id: string },
+    consultationId: string
+  ): Promise<string[]> {
     const supabase = await createClient();
     const { data, error } = await supabase
       .from("consultations")
@@ -73,9 +125,9 @@ export class MessageRepository {
     return data.map((r: any) => r.id);
   }
 
-  static async getMessagesForConsultation(consultationId: string): Promise<MessageRow[]> {
+  static async getMessagesForConsultation(consultationId: string, relatedIds?: string[]): Promise<MessageRow[]> {
     const supabase = await createClient();
-    const consultationIds = await this.getRelatedConsultationIds(consultationId);
+    const consultationIds = relatedIds ?? (await this.getRelatedConsultationIds(consultationId));
     const { data, error } = await supabase
       .from("bounded_messages")
       .select("id, consultation_id, direction, content, sent_at, read_at, attachment_path, attachment_name, attachment_type, attachment_size, reply_to_id")
@@ -89,21 +141,20 @@ export class MessageRepository {
 
     const byId = new Map<string, any>((data ?? []).map((r: any) => [r.id, r]));
 
-    return Promise.all(
-      (data ?? []).map(async (row: any) => {
+    // One storage call signs every attachment in the thread.
+    const signedUrlByPath = await signAttachmentPaths(
+      supabase,
+      (data ?? []).map((r: any) => r.attachment_path).filter(Boolean)
+    );
+
+    return (data ?? []).map((row: any) => {
         let attachment: MessageRow["attachment"] = null;
         if (row.attachment_path) {
-          const { data: signed, error: signError } = await supabase.storage
-            .from(CHAT_ATTACHMENT_BUCKET)
-            .createSignedUrl(row.attachment_path, 3600);
-          if (signError) {
-            console.error("[MessageRepository] Error signing attachment URL:", signError.message);
-          }
           attachment = {
             name: row.attachment_name ?? "Attachment",
             type: row.attachment_type ?? "",
             size: row.attachment_size ?? 0,
-            url: signed?.signedUrl ?? "",
+            url: signedUrlByPath.get(row.attachment_path) ?? "",
           };
         }
         return {
@@ -125,13 +176,16 @@ export class MessageRepository {
               })()
             : null,
         };
-      })
-    );
+      });
   }
 
-  static async markRead(consultationId: string, readerRole: "patient" | "practitioner"): Promise<number> {
+  static async markRead(
+    consultationId: string,
+    readerRole: "patient" | "practitioner",
+    relatedIds?: string[]
+  ): Promise<number> {
     const supabase = await createClient();
-    const consultationIds = await this.getRelatedConsultationIds(consultationId);
+    const consultationIds = relatedIds ?? (await this.getRelatedConsultationIds(consultationId));
     const directionToMark = readerRole === "patient" ? "doctor_to_patient" : "patient_to_doctor";
 
     const { data, error } = await supabase

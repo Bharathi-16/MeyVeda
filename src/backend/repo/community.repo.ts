@@ -86,19 +86,27 @@ export class CommunityRepository {
 
     const previewOf = (r: any) => r.content || (r.attachment_path ? "📎 Attachment" : "");
 
-    return Promise.all(
-      rows.map(async (m) => {
+    // One storage call signs every attachment on the page.
+    const signedUrlByPath = new Map<string, string>();
+    const attachmentPaths = rows.map((r) => r.attachment_path).filter(Boolean) as string[];
+    if (attachmentPaths.length > 0) {
+      const { data: signed, error: signError } = await supabase.storage
+        .from(COMMUNITY_ATTACHMENT_BUCKET)
+        .createSignedUrls(attachmentPaths, 3600);
+      if (signError) console.error("[CommunityRepository] Error signing attachments:", signError.message);
+      for (const item of signed ?? []) {
+        if (item?.path && item?.signedUrl) signedUrlByPath.set(item.path, item.signedUrl);
+      }
+    }
+
+    return rows.map((m) => {
         let attachment: CommunityMessage["attachment"] = null;
         if (m.attachment_path) {
-          const { data: signed, error: signError } = await supabase.storage
-            .from(COMMUNITY_ATTACHMENT_BUCKET)
-            .createSignedUrl(m.attachment_path, 3600);
-          if (signError) console.error("[CommunityRepository] Error signing attachment:", signError.message);
           attachment = {
             name: m.attachment_name ?? "Attachment",
             type: m.attachment_type ?? "",
             size: m.attachment_size ?? 0,
-            url: signed?.signedUrl ?? "",
+            url: signedUrlByPath.get(m.attachment_path) ?? "",
           };
         }
 
@@ -128,8 +136,7 @@ export class CommunityRepository {
           replyTo,
           reactions: Array.from(counts, ([emoji, v]) => ({ emoji, ...v })),
         };
-      })
-    );
+      });
   }
 
   static async sendMessage(

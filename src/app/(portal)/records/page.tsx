@@ -107,17 +107,40 @@ function RecordsPageContent() {
   const { data: profile } = usePatientProfile(user?.id);
   const { data: familyMembers } = useFamilyMembers(user?.id);
 
-  const patientName = profile?.name || user?.name || "Patient";
-  const patientInitials = getPatientInitials(patientName);
+  const ownerName = profile?.name || user?.name || "Patient";
 
   const selectedFamilyMember = (familyMembers || []).find(m => m.id === selectedFamilyMemberId) || null;
   const viewingRecordsForName = selectedFamilyMember ? selectedFamilyMember.name : "Myself";
 
+  // The person whose records are on screen — the account owner, or the
+  // selected family member (never the owner's details on a member's record).
+  const patientName = selectedFamilyMember ? selectedFamilyMember.name : ownerName;
+  const patientInitials = getPatientInitials(patientName);
+  const patientSummary = selectedFamilyMember
+    ? {
+        age: selectedFamilyMember.age || null,
+        gender: selectedFamilyMember.gender || null,
+        phone: selectedFamilyMember.phone || null,
+        address: null as string | null,
+      }
+    : {
+        age: profile?.age || null,
+        gender: profile?.gender || null,
+        phone: profile?.phone || null,
+        address: ((profile as any)?.address as string | undefined) || "Bangalore, India",
+      };
+
   const [detailedRecords, setDetailedRecords] = useState<any[]>([]);
+  const detailedRequestRef = useRef(0);
 
   const fetchDetailedRecords = useCallback(async () => {
     if (!user?.id) return;
+    // Switching between Myself / family members quickly can resolve requests
+    // out of order — only the latest selection may populate the list.
+    const requestId = ++detailedRequestRef.current;
+    setDetailedRecords([]);
     const data = await fetchDetailedConsultations(selectedFamilyMemberId);
+    if (requestId !== detailedRequestRef.current) return;
     setDetailedRecords(data || []);
   }, [user?.id, selectedFamilyMemberId]);
 
@@ -686,15 +709,19 @@ function RecordsPageContent() {
                     </div>
                     <div>
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Age & Gender</span>
-                      <span className="text-sm font-semibold text-slate-900">{profile?.age || "—"} y / {profile?.gender || "—"}</span>
+                      <span className="text-sm font-semibold text-slate-900 capitalize">{patientSummary.age ?? "—"} y / {patientSummary.gender || "—"}</span>
                     </div>
                     <div>
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Phone</span>
-                      <span className="text-sm font-semibold text-slate-900">{profile?.phone || "—"}</span>
+                      <span className="text-sm font-semibold text-slate-900">{patientSummary.phone || "—"}</span>
                     </div>
                     <div>
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Address</span>
-                      <span className="text-sm font-semibold text-slate-900">{(profile as any)?.address || "Bangalore, India"}</span>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                        {selectedFamilyMember ? "Relationship" : "Address"}
+                      </span>
+                      <span className="text-sm font-semibold text-slate-900 capitalize">
+                        {selectedFamilyMember ? selectedFamilyMember.relationship || "—" : patientSummary.address}
+                      </span>
                     </div>
                   </div>
                 </div>

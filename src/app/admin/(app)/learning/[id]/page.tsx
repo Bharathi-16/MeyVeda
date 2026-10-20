@@ -1,11 +1,11 @@
 "use client";
 
 import { SITE_NAME } from "@/shared/config/site";
-import { use, useState } from "react";
+import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "react-hot-toast";
-import { ArrowLeft, ArrowRight, BookOpen, CheckCircle2, Clock, Eye, Pencil, Save } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, CheckCircle2, Clock, ExternalLink, Eye, Info, Pencil, RefreshCw, Save } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@/hooks/useQuery";
 import { LEVEL_LABEL, formatDuration } from "@/shared/learning/content";
@@ -14,7 +14,7 @@ import { CourseBuilder } from "../_components/CourseBuilder";
 import { CoursePreview } from "../_components/CoursePreview";
 import { LearnersPanel } from "../_components/LearnersPanel";
 import { PublishDialog, publishProblems } from "../_components/PublishDialog";
-import { Spinner, StatusBadge, Stepper, ghostBtn, primaryBtn } from "../_components/ui";
+import { MoodleOriginBadge, MoodleSyncStatus, Spinner, StatusBadge, Stepper, ghostBtn, primaryBtn } from "../_components/ui";
 
 const TABS = [["content", "Build content"], ["preview", "Preview"], ["learners", "Learners"]] as const;
 type Tab = (typeof TABS)[number][0];
@@ -26,6 +26,29 @@ export default function CourseBuilderPage({ params }: { params: Promise<{ id: st
   const tab: Tab = tabParam === "preview" || tabParam === "learners" ? tabParam : "content";
   const { data, loading, error, refetch } = useQuery(() => adminLearningApi.details(id), [id]);
   const [publishing, setPublishing] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  // Content changes are sent to Moodle in the background: refresh until that sync has finished.
+  const busy = data?.course.moodleSync.busy ?? false;
+  useEffect(() => {
+    if (!busy) return;
+    const t = setTimeout(refetch, 3000);
+    return () => clearTimeout(t);
+  }, [busy, data, refetch]);
+
+  async function syncNow() {
+    setSyncing(true);
+    try {
+      const c = await adminLearningApi.sync(id);
+      if (c.moodleSync.error) toast.error(`Moodle sync finished with problems: ${c.moodleSync.error}`, { duration: 8000 });
+      else toast.success(c.origin === "moodle" ? "Course re-imported from Moodle" : "Course content synced to Moodle");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "The sync with Moodle failed. Please try again.");
+    } finally {
+      setSyncing(false);
+      refetch();
+    }
+  }
 
   const go = (t: Tab) => router.replace(t === "content" ? `/admin/learning/${id}` : `/admin/learning/${id}?tab=${t}`, { scroll: false });
 
@@ -60,7 +83,18 @@ export default function CourseBuilderPage({ params }: { params: Promise<{ id: st
               {course.durationMinutes ? <span className="flex items-center gap-1"><Clock size={12} /> {formatDuration(course.durationMinutes)}</span> : null}
               <span>{course.learners} learners</span>
             </p>
-            {course.moodleStatus === "missing" && <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">The linked Moodle course (id {course.moodleCourseId}) no longer exists in Moodle. It was deleted there directly.</p>}
+            {course.moodleStatus === "missing" ? (
+              <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">The linked Moodle course (id {course.moodleCourseId}) no longer exists in Moodle. It was deleted there directly.</p>
+            ) : course.moodleCourseId !== null && (
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                {course.origin === "moodle" && <MoodleOriginBadge />}
+                <MoodleSyncStatus course={course} />
+                <button onClick={syncNow} disabled={syncing || busy} className="inline-flex items-center gap-1 text-[11px] font-semibold text-herb-green hover:underline disabled:opacity-50">
+                  <RefreshCw size={11} className={cn(syncing && "animate-spin")} /> {syncing ? "Syncing…" : "Sync now"}
+                </button>
+                {course.moodleUrl && <a href={course.moodleUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted-foreground hover:text-foreground"><ExternalLink size={11} /> Open in Moodle</a>}
+              </div>
+            )}
           </div>
           <div className="flex flex-wrap gap-2 md:flex-col md:items-stretch lg:flex-row lg:items-center">
             <Link href={`/admin/learning/${id}/settings`} className={ghostBtn}><Pencil size={14} /> Edit details</Link>
@@ -85,7 +119,24 @@ export default function CourseBuilderPage({ params }: { params: Promise<{ id: st
         ))}
       </nav>
 
-      {tab === "learners" ? <LearnersPanel courseId={id} /> : tab === "preview" ? <CoursePreview course={course} sections={sections} /> : <CourseBuilder courseId={id} sections={sections} onChanged={refetch} />}
+      {tab === "learners" ? (
+        <LearnersPanel courseId={id} />
+      ) : tab === "preview" ? (
+        <CoursePreview course={course} sections={sections} />
+      ) : course.origin === "moodle" ? (
+        <div className="space-y-4">
+          <p className="flex items-start gap-2 rounded-xl bg-sky-50 px-4 py-3 text-sm text-sky-900">
+            <Info size={16} className="mt-0.5 flex-shrink-0" />
+            <span>
+              This course was created in Moodle, so its content is edited in Moodle. Changes made there appear here automatically (or use <b>Sync now</b>). Practitioners see it here once it is visible in Moodle.
+              {course.moodleUrl && <> <a href={course.moodleUrl} target="_blank" rel="noreferrer" className="font-semibold underline">Open in Moodle</a></>}
+            </span>
+          </p>
+          <CoursePreview course={course} sections={sections} />
+        </div>
+      ) : (
+        <CourseBuilder courseId={id} sections={sections} onChanged={refetch} />
+      )}
 
       {/* Step navigation: Build content → Preview → Publish */}
       {tab !== "learners" && (

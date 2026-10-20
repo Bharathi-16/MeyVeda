@@ -208,26 +208,84 @@ export class AdminRepository {
     }
   }
 
+  /**
+   * Account owners, each with their family members nested under them.
+   * Family members have their own `patients` row (no login, user_id null) —
+   * they are returned inside `familyMembers` of their owner rather than as
+   * top-level patients, with their phone/relationship from `family_members`.
+   * `lastVisit` is the latest consultation's date (consultations are created
+   * when the doctor completes the visit; `session_start` is never set).
+   */
   static async getPatients(): Promise<any[]> {
     const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("patients")
-      .select("id, full_name, date_of_birth, gender, prakriti, city, created_at, user:users ( mobile, email, is_active, abha:abha_links ( abha_id ) ), consultations ( id, session_start, is_complete, practitioner:practitioners ( id, full_name, disciplines ) )")
-      .order("created_at", { ascending: false });
+    const [{ data, error }, { data: familyRows, error: familyError }] = await Promise.all([
+      supabase
+        .from("patients")
+        .select("id, user_id, full_name, date_of_birth, gender, prakriti, city, created_at, user:users ( mobile, email, is_active, abha:abha_links ( abha_id ) ), consultations ( id, created_at, session_start, is_complete, practitioner:practitioners ( id, full_name, disciplines ) )")
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("family_members")
+        .select("id, owner_patient_id, patient_id, full_name, relationship, date_of_birth, gender, phone, blood_group, is_active, created_at"),
+    ]);
 
     if (error) {
       console.error("[AdminRepository] Error fetching patients:", error.message);
       throw new Error("Failed to fetch patients from database");
     }
+    if (familyError) {
+      console.error("[AdminRepository] Error fetching family members:", familyError.message);
+    }
 
-    return (data ?? []).map((pat: any) => {
-      const user = Array.isArray(pat.user) ? pat.user[0] : pat.user;
-      const abha = Array.isArray(user?.abha) ? user.abha : user?.abha ? [user.abha] : [];
-      return {
-        ...pat,
-        abha,
-      };
-    });
+    const withVisitStats = (pat: any) => {
+      const consultations = (pat?.consultations ?? []) as any[];
+      const latest = consultations.reduce<string | null>((acc, c) => {
+        const at = c.session_start || c.created_at;
+        return at && (!acc || new Date(at).getTime() > new Date(acc).getTime()) ? at : acc;
+      }, null);
+      return { consultations, lastVisitAt: latest };
+    };
+
+    const patientById = new Map<string, any>((data ?? []).map((p: any) => [p.id, p]));
+    const familyPatientIds = new Set<string>();
+    const familyByOwner = new Map<string, any[]>();
+
+    for (const fm of familyRows ?? []) {
+      if (fm.patient_id) familyPatientIds.add(fm.patient_id);
+      if (!fm.owner_patient_id) continue;
+      const memberPatient = fm.patient_id ? patientById.get(fm.patient_id) : null;
+      const stats = withVisitStats(memberPatient);
+      const list = familyByOwner.get(fm.owner_patient_id) ?? [];
+      list.push({
+        id: fm.id,
+        patientId: fm.patient_id,
+        full_name: fm.full_name || memberPatient?.full_name || "Family member",
+        relationship: fm.relationship,
+        date_of_birth: fm.date_of_birth || memberPatient?.date_of_birth,
+        gender: fm.gender || memberPatient?.gender,
+        phone: fm.phone,
+        blood_group: fm.blood_group,
+        is_active: fm.is_active !== false,
+        created_at: fm.created_at,
+        consultations: stats.consultations,
+        lastVisitAt: stats.lastVisitAt,
+      });
+      familyByOwner.set(fm.owner_patient_id, list);
+    }
+
+    return (data ?? [])
+      // Family members are listed under their owner, not on their own.
+      .filter((pat: any) => !familyPatientIds.has(pat.id))
+      .map((pat: any) => {
+        const user = Array.isArray(pat.user) ? pat.user[0] : pat.user;
+        const abha = Array.isArray(user?.abha) ? user.abha : user?.abha ? [user.abha] : [];
+        const stats = withVisitStats(pat);
+        return {
+          ...pat,
+          abha,
+          lastVisitAt: stats.lastVisitAt,
+          familyMembers: familyByOwner.get(pat.id) ?? [],
+        };
+      });
   }
 
   static async togglePatientStatus(patientId: string, isActive: boolean): Promise<void> {

@@ -73,7 +73,11 @@ export function PractitionerCard({ doctor, compact = false, isFavorite: isFavori
     gradient: "from-neutral-500 to-neutral-600",
   };
 
-  const focusAreas = doctor.specialties?.length ? doctor.specialties : (doctor.specialty ? [doctor.specialty] : []);
+  const consultModes = (doctor.consultModes ?? []).filter(
+    (mode) => mode === "clinic" || (mode === "video" && ENABLE_VIDEO_CONSULTATION)
+  );
+
+  const focusAreas =doctor.specialties?.length ? doctor.specialties : (doctor.specialty ? [doctor.specialty] : []);
 
   // Practice location, straight from the practitioner's saved profile. Long
   // values are truncated in place (with the full text on hover) so the card
@@ -252,24 +256,28 @@ export function PractitionerCard({ doctor, compact = false, isFavorite: isFavori
         </div>
       </div>
 
-      {/* Consultation Modes */}
-      {ENABLE_VIDEO_CONSULTATION && doctor.consultModes.includes("video") && (
+      {/* Consultation Modes — what the practitioner actually offers */}
+      {consultModes.length > 0 && (
         <div className="flex gap-2 mt-3.5 flex-wrap justify-center relative z-10">
-          <span className="text-[10px] font-bold text-herb-green bg-herb-green/5 border border-herb-green/10 px-2.5 py-1 rounded-lg flex items-center gap-1 leading-none shadow-3xs">
-            <Video size={12} />
-            <span>Video Consult</span>
-          </span>
+          {consultModes.includes("video") && (
+            <span className="text-[10px] font-bold text-herb-green bg-herb-green/5 border border-herb-green/10 px-2.5 py-1 rounded-lg flex items-center gap-1.5 leading-none shadow-3xs">
+              <Video size={12} />
+              <span>Video Consult</span>
+            </span>
+          )}
+          {consultModes.includes("clinic") && (
+            <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-lg flex items-center gap-1.5 leading-none shadow-3xs">
+              <Building2 size={12} />
+              <span>In-Clinic Visit</span>
+            </span>
+          )}
         </div>
       )}
 
       {/* Actions */}
-      <div className="mt-3.5 flex flex-col gap-2 items-stretch relative z-10">
+      <div className="mt-auto pt-3.5 flex flex-col gap-2 items-stretch relative z-10">
         <button onClick={goToDoctor} className="w-full py-2 rounded-full bg-herb-green hover:bg-herb-green-light active:scale-[0.98] font-bold text-xs text-white shadow-xs hover:shadow-md transition-all cursor-pointer">
           Book Appointment
-        </button>
-
-        <button onClick={goToDoctor} className="w-full py-2 rounded-full bg-herb-green/10 hover:bg-herb-green/15 active:scale-[0.98] font-bold text-xs text-herb-green transition-all cursor-pointer">
-          View Profile
         </button>
       </div>
     </div>

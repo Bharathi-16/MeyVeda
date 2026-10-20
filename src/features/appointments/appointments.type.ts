@@ -28,4 +28,12 @@ export type AppointmentRow = {
   reason?: string;
   refunded?: boolean;
   reminder: boolean;
+  /** e.g. "7:00 PM" — when this slot's grace window ends, for upcoming appointments only. */
+  expiresAtLabel?: string;
+  /** Who the appointment is for — the account owner or one of their family members. */
+  bookedFor?: {
+    name: string;
+    isFamilyMember: boolean;
+    relationship?: string;
+  };
 };

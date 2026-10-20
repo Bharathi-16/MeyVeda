@@ -10,6 +10,7 @@ import { ConsultationService } from "../service/consultation.service";
 import { sendInvoiceEmail } from "../service/consultation-email.helper";
 import { requireAuth } from "@/shared/auth/require-auth";
 import { AppError } from "@/shared/api/api-error";
+import { auditRequest } from "@/shared/security/audit-log";
 
 /**
  * GET /api/consultations/[id]/pdf — Generate consultation PDF.
@@ -25,6 +26,13 @@ export async function generatePdf(
   try {
     const authUser = await requireAuth(req);
     data = await ConsultationService.getConsultationReportData(authUser, id);
+    // Access to a clinical record is itself an auditable event.
+    auditRequest(req, authUser, {
+      action: "download_consultation_report",
+      module: "health_records",
+      recordId: id,
+      patientId: data?.patient_id ?? undefined,
+    });
   } catch (error: unknown) {
     const statusCode = error instanceof AppError ? error.statusCode : 500;
     const message = error instanceof Error ? error.message : "Failed to load consultation";
@@ -73,6 +81,12 @@ export async function generateInvoicePdf(
   try {
     const authUser = await requireAuth(req);
     data = await ConsultationService.getConsultationInvoiceData(authUser, id);
+    auditRequest(req, authUser, {
+      action: "download_invoice",
+      module: "health_records",
+      recordId: id,
+      patientId: data?.patient_id ?? undefined,
+    });
   } catch (error: unknown) {
     const statusCode = error instanceof AppError ? error.statusCode : 500;
     const message = error instanceof Error ? error.message : "Failed to load consultation";

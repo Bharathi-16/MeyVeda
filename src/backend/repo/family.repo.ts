@@ -116,6 +116,22 @@ export class FamilyRepository {
     return data?.patient_id ?? null;
   }
 
+  /** `patients.id` of every active family member under an account owner. */
+  static async getActiveFamilyPatientIds(ownerPatientId: string): Promise<string[]> {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("family_members")
+      .select("patient_id")
+      .eq("owner_patient_id", ownerPatientId)
+      .eq("is_active", true);
+
+    if (error) {
+      console.error("[FamilyRepository] Error resolving family patient ids:", error.message);
+      return [];
+    }
+    return (data ?? []).map((row) => row.patient_id).filter(Boolean) as string[];
+  }
+
   static async deleteFamilyMember(id: string) {
     const supabase = await createClient();
     // Soft delete: family members can be referenced by appointments, consultations,

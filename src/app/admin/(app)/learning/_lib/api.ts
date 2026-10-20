@@ -43,6 +43,8 @@ export const adminLearningApi = {
   update: (id: string, input: Partial<CourseInput>) => apiClient<{ data: AdminCourse }>(c(id), json("PATCH", input)).then(unwrap),
   publish: (id: string, published: boolean) => apiClient<{ data: AdminCourse }>(`${c(id)}/publish`, json("POST", { published })).then(unwrap),
   remove: (id: string) => apiClient(c(id), json("DELETE")),
+  sync: (id: string) => apiClient<{ data: AdminCourse }>(`${c(id)}/sync`, json("POST")).then(unwrap),
+  syncAll: () => apiClient<{ data: { imported: number; synced: number; failed: number } }>(`${base}/sync`, json("POST")).then(unwrap),
 
   addSection: (id: string, title: string, description = "") => apiClient<{ data: { id: string } }>(`${c(id)}/sections`, json("POST", { title, description })).then(unwrap),
   updateSection: (id: string, sectionId: string, patch: { title?: string; description?: string }) => apiClient(`${c(id)}/sections/${sectionId}`, json("PATCH", patch)),

@@ -37,6 +37,12 @@ export type AdminCourse = CourseSummary & {
   moodleCourseId: number | null;
   /** linked: exists in Moodle · missing: deleted in Moodle directly · unknown: Moodle not reachable */
   moodleStatus: "linked" | "missing" | "not_linked" | "unknown";
+  /** yurcore: built here and mirrored into Moodle · moodle: created in Moodle and imported (edited in Moodle) */
+  origin: "yurcore" | "moodle";
+  /** Last content sync with Moodle: when it finished, what failed, and whether one is running now. */
+  moodleSync: { syncedAt: string | null; error: string | null; busy: boolean };
+  /** The course in Moodle, for admins (null when not linked). */
+  moodleUrl: string | null;
 };
 
 export type QuizOption = { id?: string; text: string; correct: boolean };

@@ -33,7 +33,19 @@ export type PrescriptionView = {
   assessment: string;
   items: PrescriptionItemView[];
   isDetailed?: boolean;
+  /** Set when the patient is a family member: the account owner they belong to. */
+  ownerPatient?: OwnerPatientView | null;
+  /** Family member's relationship to the account owner. */
+  relationship?: string;
   _raw?: any;
+};
+
+export type OwnerPatientView = {
+  id: string;
+  name: string;
+  gender: string;
+  age: number | string;
+  phone: string;
 };
 
 const PATIENT_SELECT = `
@@ -143,7 +155,7 @@ export class PrescriptionRepository {
       .select(PRACTITIONER_SELECT)
       .eq("practitioner_id", practitionerId)
       .order("created_at", { ascending: false })
-      .limit(50);
+      .limit(500);
 
     if (error) {
       console.error("[PrescriptionRepository] Error fetching practitioner prescriptions:", error.message);
@@ -154,13 +166,39 @@ export class PrescriptionRepository {
     // family_members instead — look it up by patient_id, same as the owner path.
     const patientIds = Array.from(new Set((data ?? []).map((r: any) => r.patient?.id).filter(Boolean)));
     const phoneByPatientId: Record<string, string> = {};
+    // A family member's prescriptions are listed under their account owner in
+    // the doctor's directory — carry the owner along so the owner can be shown
+    // even before they have any consultation of their own.
+    const ownerIdByPatientId: Record<string, string> = {};
+    const relationshipByPatientId: Record<string, string> = {};
+    const ownerById: Record<string, OwnerPatientView> = {};
     if (patientIds.length > 0) {
       const { data: familyMembers } = await supabase
         .from("family_members")
-        .select("patient_id, phone")
+        .select("patient_id, phone, owner_patient_id, relationship")
         .in("patient_id", patientIds);
       for (const fm of familyMembers ?? []) {
         if (fm.patient_id && fm.phone) phoneByPatientId[fm.patient_id] = fm.phone;
+        if (fm.patient_id && fm.owner_patient_id) ownerIdByPatientId[fm.patient_id] = fm.owner_patient_id;
+        if (fm.patient_id && fm.relationship) relationshipByPatientId[fm.patient_id] = fm.relationship;
+      }
+
+      const ownerIds = Array.from(new Set(Object.values(ownerIdByPatientId)));
+      if (ownerIds.length > 0) {
+        const { data: owners } = await supabase
+          .from("patients")
+          .select("id, full_name, date_of_birth, gender, user:users(mobile)")
+          .in("id", ownerIds);
+        for (const owner of owners ?? []) {
+          const ownerUser: any = Array.isArray(owner.user) ? owner.user[0] : owner.user;
+          ownerById[owner.id] = {
+            id: owner.id,
+            name: owner.full_name ?? "Patient",
+            gender: owner.gender || "Unknown",
+            age: owner.date_of_birth ? new Date().getFullYear() - new Date(owner.date_of_birth).getFullYear() : "N/A",
+            phone: ownerUser?.mobile || "",
+          };
+        }
       }
     }
 
@@ -210,6 +248,8 @@ export class PrescriptionRepository {
         assessment: "",
         items: mapItems(row.prescription_items),
         isDetailed: true,
+        ownerPatient: ownerById[ownerIdByPatientId[patientObj.id]] ?? null,
+        relationship: relationshipByPatientId[patientObj.id],
         _raw: {
           visitReason: rawAssessment?.visitReason,
           chiefComplaints: parsedChiefComplaints,

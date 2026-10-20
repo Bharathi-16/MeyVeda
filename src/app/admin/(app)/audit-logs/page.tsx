@@ -4,7 +4,7 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { useAdminAuditLogs } from "@/hooks/use-admin";
 
-const MODULES = ["all", "practitioners", "patients", "assistants", "prescriptions", "medicines", "clinics", "orders", "appointments"];
+const MODULES = ["all", "practitioners", "patients", "family_members", "assistants", "prescriptions", "health_records", "appointments", "availability", "consents", "profiles", "medicines", "clinics", "orders", "auth"];
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleString("en-IN", {
@@ -58,7 +58,7 @@ export default function AdminAuditLogsPage() {
                 : "border-border text-muted-foreground hover:bg-muted"
             )}
           >
-            {m}
+            {m.replace(/_/g, " ")}
           </button>
         ))}
         <input

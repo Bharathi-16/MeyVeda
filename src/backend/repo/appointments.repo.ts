@@ -31,6 +31,14 @@ export type AppointmentDbRow = {
   missed_by: string | null;
   patient_joined_at: string | null;
 
+  patient_id?: string | null;
+  family_member_id?: string | null;
+  patient?: { full_name: string | null } | { full_name: string | null }[] | null;
+  family_member?:
+  | { full_name: string | null; relationship: string | null }
+  | { full_name: string | null; relationship: string | null }[]
+  | null;
+
   slot:
   | {
     fee: number | null;
@@ -195,6 +203,15 @@ const APPOINTMENT_SELECT = `
   session_ended_at,
   missed_by,
   patient_joined_at,
+  patient_id,
+  family_member_id,
+  patient:patients (
+    full_name
+  ),
+  family_member:family_members (
+    full_name,
+    relationship
+  ),
   slot:slots (
     fee
   ),
@@ -621,6 +638,8 @@ export class AppointmentsRepository {
   static async getAppointmentEmailDetails(appointmentId: string): Promise<{
     patientEmail: string;
     patientName: string;
+    /** Set when the appointment is for a family member — the email goes to the account owner (patientName). */
+    familyMemberName?: string;
     practitionerName: string;
     scheduledDate: string;
     scheduledTime: string;
@@ -635,6 +654,7 @@ export class AppointmentsRepository {
         mode,
         scheduled_date,
         scheduled_time,
+        patient_id,
         patient:patients ( full_name, user:users ( email ) ),
         practitioner:practitioners ( full_name ),
         slot:slots ( fee )
@@ -655,14 +675,43 @@ export class AppointmentsRepository {
     const slot = Array.isArray(data.slot) ? data.slot[0] : data.slot;
     const patientUser = patient ? (Array.isArray(patient.user) ? patient.user[0] : patient.user) : null;
 
-    const patientEmail = patientUser?.email;
+    let patientEmail: string | undefined = patientUser?.email;
+    let patientName: string = patient?.full_name || "Patient";
+    let familyMemberName: string | undefined;
+
+    // Family members have no login/email of their own — the account owner
+    // who booked on their behalf receives the email, naming the member.
+    if (!patientEmail && data.patient_id) {
+      const { data: familyRow } = await supabase
+        .from("family_members")
+        .select("full_name, owner_patient_id")
+        .eq("patient_id", data.patient_id)
+        .limit(1)
+        .maybeSingle();
+
+      const { data: owner } = familyRow?.owner_patient_id
+        ? await supabase
+            .from("patients")
+            .select("full_name, user:users ( email )")
+            .eq("id", familyRow.owner_patient_id)
+            .maybeSingle()
+        : { data: null };
+      const ownerUser: any = owner ? (Array.isArray(owner.user) ? owner.user[0] : owner.user) : null;
+      if (ownerUser?.email) {
+        patientEmail = ownerUser.email;
+        patientName = owner?.full_name || "Patient";
+        familyMemberName = familyRow?.full_name || patient?.full_name || undefined;
+      }
+    }
+
     if (!patientEmail) {
       return null;
     }
 
     return {
       patientEmail,
-      patientName: patient?.full_name || "Patient",
+      patientName,
+      familyMemberName,
       practitionerName: practitioner?.full_name || "Practitioner",
       scheduledDate: data.scheduled_date,
       scheduledTime: data.scheduled_time,

@@ -1,7 +1,7 @@
 import { createClient } from "@/shared/db/supabase.server";
 import type { Practitioner } from "@/features/doctor/types/doctor.types";
 import { bookingMutex, toHHMM } from "./booking.repo";
-import { resolveActiveFeeRupees } from "@/lib/fee";
+import { resolveActiveFeeRupees, resolveConsultModes } from "@/lib/fee";
 import { ENABLE_VIDEO_CONSULTATION } from "@/lib/feature-flags";
 
 
@@ -52,9 +52,7 @@ function mapPractitioner(row: any): Practitioner {
     isVerified: row.verification_status === "verified" || row.hpr_verified === true,
     avatar: getInitials(row.full_name),
     languages: row.languages ?? [],
-    consultModes: row.base_clinic_fee
-      ? (["video", "clinic"] as ("video" | "clinic")[])
-      : (["video"] as ("video" | "clinic")[]),
+    consultModes: resolveConsultModes(row.base_video_fee, row.base_clinic_fee),
     nextAvailable: "Tomorrow",
     location: [row.city, row.state].filter(Boolean).join(", "),
     qualifications: row.qualifications ?? [],
@@ -253,6 +251,7 @@ export class DiscoverRepository {
       ...d,
       is_active: d.verification_status === "verified",
       consultation_fee: resolveActiveFeeRupees(d.base_video_fee, d.base_clinic_fee),
+      consult_modes: resolveConsultModes(d.base_video_fee, d.base_clinic_fee),
       verifications: [{ status: d.verification_status, hpr_id: d.hpr_id }],
       state: d.state ?? "",
       city: d.city ?? "",
@@ -434,7 +433,7 @@ export class DiscoverRepository {
     date: string;
     time: string;
     familyMemberId?: string;
-  }): Promise<void> {
+  }): Promise<{ id: string }> {
     const supabase = await createClient();
 
     const { data: patientProfile, error: patErr } = await supabase
@@ -481,7 +480,7 @@ export class DiscoverRepository {
         throw new Error("Slot no longer available.");
       }
 
-      const { error: apptError } = await supabase.from("appointments").insert({
+      const { data: inserted, error: apptError } = await supabase.from("appointments").insert({
         patient_profile_id: patientProfile.id,
         patient_id: resolvedPatientId,
         doctor_profile_id: params.doctorProfileId,
@@ -493,12 +492,13 @@ export class DiscoverRepository {
         scheduled_date: params.date,
         scheduled_time: formattedTime,
         duration_min: 30,
-      });
+      }).select("id").single();
 
       if (apptError) {
         console.error("[DiscoverRepository] bookNewDoctorAppointment error:", apptError.message);
         throw apptError;
       }
+      return { id: inserted.id };
     } finally {
       release();
     }

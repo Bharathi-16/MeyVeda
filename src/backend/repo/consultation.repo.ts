@@ -140,6 +140,48 @@ export class ConsultationRepository {
     return data ?? [];
   }
 
+  /** Completed consultations and prescriptions across a set of patients (account owner + family). */
+  static async getRecordCountsForPatients(patientIds: string[]): Promise<{ consultations: number; prescriptions: number }> {
+    if (patientIds.length === 0) return { consultations: 0, prescriptions: 0 };
+    const supabase = await createClient();
+    const [consultations, prescriptions] = await Promise.all([
+      supabase.from("consultations").select("id", { count: "exact", head: true }).in("patient_id", patientIds),
+      supabase.from("prescriptions").select("id", { count: "exact", head: true }).in("patient_id", patientIds),
+    ]);
+
+    if (consultations.error || prescriptions.error) {
+      console.error(
+        "[ConsultationRepository] Error counting patient records:",
+        consultations.error?.message || prescriptions.error?.message,
+      );
+    }
+    return { consultations: consultations.count ?? 0, prescriptions: prescriptions.count ?? 0 };
+  }
+
+  /**
+   * For a family member's patients.id: the account owner's email and name
+   * (family members have no login/email of their own). Null otherwise.
+   */
+  static async getFamilyOwnerEmailRecipient(patientId: string): Promise<{ email: string; name: string } | null> {
+    const supabase = await createClient();
+    const { data: familyRow } = await supabase
+      .from("family_members")
+      .select("owner_patient_id")
+      .eq("patient_id", patientId)
+      .limit(1)
+      .maybeSingle();
+    if (!familyRow?.owner_patient_id) return null;
+
+    const { data: owner } = await supabase
+      .from("patients")
+      .select("full_name, user:users ( email )")
+      .eq("id", familyRow.owner_patient_id)
+      .maybeSingle();
+    const ownerUser: any = owner ? (Array.isArray(owner.user) ? owner.user[0] : owner.user) : null;
+    if (!ownerUser?.email) return null;
+    return { email: ownerUser.email, name: owner?.full_name || "Patient" };
+  }
+
   static async getConsultationOwner(consultationId: string): Promise<{ patient_id: string; practitioner_id: string } | null> {
     const supabase = await createClient();
     const { data, error } = await supabase

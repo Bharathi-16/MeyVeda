@@ -22,6 +22,18 @@ export async function getDetailedConsultationsController(req: NextRequest) {
   }
 }
 
+export async function getPatientRecordStatsController(req: NextRequest) {
+  try {
+    const authUser = await requireAuth(req);
+    const data = await ConsultationService.getPatientRecordStats(authUser);
+    return NextResponse.json({ success: true, data });
+  } catch (error: unknown) {
+    console.error("getPatientRecordStatsController error:", error);
+    const statusCode = error instanceof AppError ? error.statusCode : 500;
+    return NextResponse.json({ success: false, error: getErrorMessage(error) }, { status: statusCode });
+  }
+}
+
 export async function getConsultationReportController(
   req: NextRequest,
   context: { params: Promise<{ id: string }> }

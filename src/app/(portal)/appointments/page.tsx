@@ -21,6 +21,8 @@ import {
   Star,
   FileText,
   Stethoscope,
+  UserRound,
+  Users,
 } from "lucide-react";
 
 type Tab = "upcoming" | "past" | "cancelled";
@@ -257,6 +259,28 @@ export default function AppointmentsPage() {
                   </span>
                 )}
               </div>
+
+              {appt.bookedFor && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-lg border",
+                      appt.bookedFor.isFamilyMember
+                        ? "bg-indigo-50 text-indigo-700 border-indigo-100"
+                        : "bg-slate-50 text-slate-700 border-slate-200"
+                    )}
+                  >
+                    {appt.bookedFor.isFamilyMember ? <Users size={12} /> : <UserRound size={12} />}
+                    <span className="text-slate-500 font-medium">For</span>
+                    <span className="capitalize">{appt.bookedFor.name}</span>
+                  </span>
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                    {appt.bookedFor.isFamilyMember
+                      ? `Family member${appt.bookedFor.relationship ? ` · ${appt.bookedFor.relationship}` : ""}`
+                      : "Account owner"}
+                  </span>
+                </div>
+              )}
 
               <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-slate-600 font-medium">
                 <span className="flex items-center gap-1.5">

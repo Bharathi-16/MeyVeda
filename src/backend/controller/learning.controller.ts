@@ -73,6 +73,8 @@ export const LearningAdminController = {
   update: (req: NextRequest, ctx: Ctx) => adminAction(req, "learning.course.update", async (u, p) => LearningAdminService.updateCourse(u, p.id, await body(req)), ctx),
   publish: (req: NextRequest, ctx: Ctx) =>
     adminAction(req, "learning.course.publish", async (u, p) => LearningAdminService.setPublished(u, p.id, ((await body(req)) as { published?: unknown }).published === true), ctx),
+  sync: (req: NextRequest, ctx: Ctx) => adminAction(req, "learning.course.sync", async (u, p) => LearningAdminService.syncCourse(u, p.id), ctx),
+  syncAll: (req: NextRequest) => adminAction(req, "learning.sync", async (u) => LearningAdminService.syncAll(u)),
   remove: (req: NextRequest, ctx: Ctx) => adminAction(req, "learning.course.delete", async (u, p) => { await LearningAdminService.deleteCourse(u, p.id); return null; }, ctx),
 
   createUpload: (req: NextRequest, ctx: Ctx) => adminAction(req, "learning.file.upload", async (u, p) => LearningAdminService.createUpload(u, p.id, await body(req)), ctx, 201),

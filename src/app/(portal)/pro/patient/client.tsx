@@ -59,6 +59,14 @@ function useNewDoctorAvailableDates(doctorId: string | undefined) {
 }
 
 /** Parses "HH:MM" (24h) or "h:mm AM/PM" into minutes since midnight, or -1 if unparseable. */
+/** BMI = weight (kg) / height (m)², one decimal. Blank unless both are positive numbers. */
+function computeBmi(weightKg: unknown, heightCm: unknown): string {
+  const w = Number(weightKg);
+  const h = Number(heightCm);
+  if (!weightKg || !heightCm || !Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return "";
+  return (w / Math.pow(h / 100, 2)).toFixed(1);
+}
+
 function timeStringToMinutes(t: string | undefined | null): number {
   if (!t) return -1;
   const ampmMatch = t.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
@@ -458,22 +466,19 @@ export default function PatientIntakeClient() {
   const [isSaved, setIsSaved] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Sync vitals.weight with header weight input
+  // Sync vitals.weight with header weight input; BMI follows weight and height
+  // (and clears when either is removed).
   useEffect(() => {
-    if (weight !== "") {
-      setVitals(v => {
-        const bmi = (weight && height) ? (Number(weight) / Math.pow(Number(height) / 100, 2)).toFixed(1) : "";
-        return { ...v, weight: String(weight), bmi };
-      });
-    }
+    setVitals(v => ({
+      ...v,
+      weight: weight !== "" ? String(weight) : v.weight,
+      bmi: computeBmi(weight !== "" ? weight : v.weight, height),
+    }));
   }, [weight, height]);
 
   // Sync vitals weight change back to header weight
   const handleVitalsWeightChange = (val: string) => {
-    setVitals(v => {
-      const bmi = (val && height) ? (Number(val) / Math.pow(Number(height) / 100, 2)).toFixed(1) : "";
-      return { ...v, weight: val, bmi };
-    });
+    setVitals(v => ({ ...v, weight: val, bmi: computeBmi(val, height) }));
     if (val !== "") {
       setWeight(Number(val));
     } else {
@@ -517,7 +522,7 @@ export default function PatientIntakeClient() {
           temp: v.temp || "",
           spo2: v.spo2 || "",
           weight: v.weight || pat?.weight || "",
-          bmi: (v.weight && v.height) ? (v.weight / Math.pow(v.height / 100, 2)).toFixed(1) : "",
+          bmi: computeBmi(v.weight || pat?.weight, v.height || pat?.height),
         });
 
         if (latestVisit.medications && latestVisit.medications.length > 0) {

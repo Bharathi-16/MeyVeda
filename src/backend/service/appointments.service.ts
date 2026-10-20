@@ -75,6 +75,12 @@ export type AppointmentRow = {
   reminder: boolean;
   /** e.g. "7:00 PM" — when this slot's grace window (duration + buffer) ends, for upcoming appointments only. */
   expiresAtLabel?: string;
+  /** Who the appointment is for — the account owner or one of their family members. */
+  bookedFor?: {
+    name: string;
+    isFamilyMember: boolean;
+    relationship?: string;
+  };
 };
 
 export type JitsiVideoSession = {
@@ -437,6 +443,7 @@ export class AppointmentsService {
     authUser: AuthUser,
   ): Promise<AppointmentRow[]> {
     let rawData: AppointmentDbRow[] = [];
+    let ownerPatientId: string | undefined;
 
     if (isPatientRole(authUser)) {
       const patientId =
@@ -447,6 +454,7 @@ export class AppointmentsService {
       if (!patientId) {
         return [];
       }
+      ownerPatientId = patientId;
 
       rawData =
         await AppointmentsRepository.getAppointmentsForPatient(
@@ -473,7 +481,7 @@ export class AppointmentsService {
       return [];
     }
 
-    return this.mapDbRowsToUI(rawData);
+    return this.mapDbRowsToUI(rawData, ownerPatientId);
   }
 
   /**
@@ -526,6 +534,7 @@ export class AppointmentsService {
         emailDetails.patientEmail,
         {
           patientName: emailDetails.patientName,
+          familyMemberName: emailDetails.familyMemberName,
           practitionerName: emailDetails.practitionerName,
           date: formatDisplayDate(emailDetails.scheduledDate),
           time: formatTime(emailDetails.scheduledTime),
@@ -608,6 +617,7 @@ export class AppointmentsService {
         emailDetails.patientEmail,
         {
           patientName: emailDetails.patientName,
+          familyMemberName: emailDetails.familyMemberName,
           practitionerName: emailDetails.practitionerName,
           date: formatDisplayDate(emailDetails.scheduledDate),
           time: formatTime(emailDetails.scheduledTime),
@@ -725,6 +735,7 @@ export class AppointmentsService {
           emailDetails.patientEmail,
           {
             patientName: emailDetails.patientName,
+            familyMemberName: emailDetails.familyMemberName,
             practitionerName: emailDetails.practitionerName,
             date: formatDisplayDate(emailDetails.scheduledDate),
             time: formatTime(emailDetails.scheduledTime),
@@ -1227,6 +1238,7 @@ export class AppointmentsService {
 
   private static mapDbRowsToUI(
     rawData: AppointmentDbRow[],
+    ownerPatientId?: string,
   ): AppointmentRow[] {
     return rawData.map((row) => {
       const practitioner = getFirst(row.practitioner);
@@ -1385,7 +1397,27 @@ export class AppointmentsService {
         refunded: row.status === "cancelled",
         reminder: false,
         expiresAtLabel,
+        bookedFor: resolveBookedFor(row, ownerPatientId),
       };
     });
   }
+}
+
+/** Account owner vs family member the appointment was booked for. */
+function resolveBookedFor(row: AppointmentDbRow, ownerPatientId?: string): AppointmentRow["bookedFor"] {
+  const familyMember = getFirst(row.family_member);
+  const patient = getFirst(row.patient);
+  // Some family appointments (e.g. a follow-up the doctor fixed) carry only
+  // the member's own patient_id, so a patient_id other than the owner's also
+  // marks a family booking.
+  const isOtherPatient = Boolean(ownerPatientId && row.patient_id && row.patient_id !== ownerPatientId);
+  if ((row.family_member_id && familyMember) || isOtherPatient) {
+    return {
+      name: familyMember?.full_name?.trim() || patient?.full_name?.trim() || "Family member",
+      isFamilyMember: true,
+      relationship: familyMember?.relationship ?? undefined,
+    };
+  }
+  if (!patient?.full_name) return undefined;
+  return { name: patient.full_name.trim(), isFamilyMember: false };
 }

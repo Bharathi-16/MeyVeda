@@ -70,6 +70,12 @@ export default function AvailabilityPage() {
       setBufferMins(practitioner.bufferMin || 0);
       if (practitioner.videoFee) setVideoFee(practitioner.videoFee);
       if (practitioner.clinicFee) setClinicFee(practitioner.clinicFee);
+      // A mode is offered exactly when its fee is set — slots are generated per fee.
+      const offersVideo = ENABLE_VIDEO_CONSULTATION && (practitioner.videoFee ?? 0) > 0;
+      const offersClinic = (practitioner.clinicFee ?? 0) > 0;
+      if (offersVideo && offersClinic) setConsultationMode("both");
+      else if (offersVideo) setConsultationMode("video");
+      else if (offersClinic) setConsultationMode("clinic");
     }
   }, [practitioner]);
 
@@ -153,9 +159,12 @@ export default function AvailabilityPage() {
         await updateCalendarAvailability(user.id, updates);
       }
 
+      // The mode not offered is stored with no fee, so no slots are generated for it.
+      const offersVideo = ENABLE_VIDEO_CONSULTATION && consultationMode !== "clinic";
+      const offersClinic = consultationMode !== "video";
       await updatePractitionerSettings(user.id, {
-        baseVideoFee: videoFee,
-        baseClinicFee: clinicFee,
+        baseVideoFee: offersVideo ? videoFee : 0,
+        baseClinicFee: offersClinic ? clinicFee : 0,
         slotDurationMin: slotDuration,
         bufferMin: bufferMins,
       });
@@ -476,7 +485,7 @@ export default function AvailabilityPage() {
               <div className="bg-white rounded-3xl p-6 border border-neutral-150 shadow-sm">
                 <h4 className="text-xs font-bold text-muted-foreground mb-4">Consultation Fees</h4>
                 <div className="space-y-4">
-                  {ENABLE_VIDEO_CONSULTATION && (
+                  {ENABLE_VIDEO_CONSULTATION && consultationMode !== "clinic" && (
                     <div>
                       <label className="text-[10px] text-muted-foreground flex items-center gap-1.5 mb-1"><Video size={12} /> Video Consultation Fee</label>
                       <div className="relative">
@@ -490,6 +499,7 @@ export default function AvailabilityPage() {
                       </div>
                     </div>
                   )}
+                  {consultationMode !== "video" && (
                   <div>
                     <label className="text-[10px] text-muted-foreground flex items-center gap-1.5 mb-1"><Building size={12} /> In-Clinic Consultation Fee</label>
                     <div className="relative">
@@ -502,6 +512,7 @@ export default function AvailabilityPage() {
                       />
                     </div>
                   </div>
+                  )}
                 </div>
               </div>
 

@@ -3,6 +3,7 @@ import "server-only";
 import { ConsultationRepository, type SaveCompleteConsultationInput } from "../repo/consultation.repo";
 import { FamilyRepository } from "../repo/family.repo";
 import { DiscoverRepository } from "../repo/discover.repo";
+import { AppointmentsRepository } from "../repo/appointments.repo";
 import { AuthUser } from "@/shared/auth/auth.types";
 import { resolveActingPractitionerUserId } from "@/shared/auth/resolve-practitioner-context";
 import { ForbiddenError, AppError } from "@/shared/api/api-error";
@@ -25,6 +26,17 @@ export class ConsultationService {
     return ConsultationRepository.getDetailedConsultationsForPatient(familyMemberPatientId);
   }
 
+  /** Consultation and prescription totals for the account owner plus their family members. */
+  static async getPatientRecordStats(authUser: AuthUser): Promise<{ consultations: number; prescriptions: number }> {
+    if (authUser.role !== "patient") return { consultations: 0, prescriptions: 0 };
+
+    const ownerPatientId = await ConsultationRepository.getPatientIdFromUserId(authUser.id);
+    if (!ownerPatientId) return { consultations: 0, prescriptions: 0 };
+
+    const familyPatientIds = await FamilyRepository.getActiveFamilyPatientIds(ownerPatientId);
+    return ConsultationRepository.getRecordCountsForPatients([ownerPatientId, ...familyPatientIds]);
+  }
+
   static async getConsultationReportData(authUser: AuthUser, consultationId: string): Promise<any> {
     const owner = await ConsultationRepository.getConsultationOwner(consultationId);
     if (!owner) {
@@ -35,8 +47,13 @@ export class ConsultationService {
       let authorized = false;
 
       if (authUser.role === "patient") {
+        // The account owner may open their own reports and those of their
+        // active family members (who have no login and are managed by them).
         const patientId = await ConsultationRepository.getPatientIdFromUserId(authUser.id);
-        authorized = !!patientId && owner.patient_id === patientId;
+        authorized =
+          !!patientId &&
+          (owner.patient_id === patientId ||
+            (await AppointmentsRepository.isOwnOrFamilyPatient(patientId, owner.patient_id)));
       } else if (
         authUser.role === "doctor" ||
         (authUser.role as string) === "practitioner" ||
@@ -134,7 +151,8 @@ export class ConsultationService {
     // Fire-and-forget: prescription/invoice emails must never fail the save.
     try {
       const invoiceData = await this.getConsultationInvoiceData(authUser, consultationId);
-      await sendPostConsultationEmails(invoiceData);
+      const familyOwner = await ConsultationRepository.getFamilyOwnerEmailRecipient(result.patientId);
+      await sendPostConsultationEmails(invoiceData, familyOwner);
     } catch (error) {
       console.error("[ConsultationService] Post-consultation email dispatch failed:", error);
     }

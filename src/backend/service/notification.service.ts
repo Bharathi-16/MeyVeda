@@ -32,6 +32,8 @@ export class NotificationService {
       type: row.type ?? "general",
       isRead: row.is_read ?? false,
       deepLink: row.deep_link,
+      referenceId: row.reference_id ?? null,
+      referenceType: row.reference_type ?? null,
       createdAt: row.created_at,
       timeAgo: timeAgo(row.created_at),
     }));

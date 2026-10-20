@@ -35,6 +35,9 @@ export type PrescriptionView = {
   assessment: string;
   items: PrescriptionItemView[];
   isDetailed?: boolean;
+  /** Set when the patient is a family member: the account owner they belong to. */
+  ownerPatient?: { id: string; name: string; gender: string; age: number | string; phone: string } | null;
+  relationship?: string;
   _raw?: any;
 };
 

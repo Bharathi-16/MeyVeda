@@ -48,3 +48,5 @@ supabase/.temp
 supabase/.branches
 supabase/functions/.env
 supabase/.env.functions
+# Claude Code local settings
+.claude/settings.local.json
